@@ -1,5 +1,10 @@
 # Student Dropout Early Warning System Using Machine Learning
 
+## Pending 15-input upgrade (development branch)
+
+This branch adds Mother's Education, Father's Education, Gender, and Marital Status to the original 11-field assessment (15 inputs total). **The upgraded model is not yet trained on this branch.** Run `python -m src.train_uci_sem1_15` locally, commit the generated model artifact, metadata, and `reports/uci_sem1/training_results_15_input.json`, then run the full tests and manually verify all pages before merging. See `docs/14_input_migration.md` (its filename is retained for history; the document describes the 15-input upgrade). The old 11-input model cannot serve the 15-input form. The source remains Portugal UCI and is not locally validated for Bangladesh.
+
+
 This academic project estimates elevated risk of later university dropout after a completed semester. It supports timely review—not automatic decisions or certainty about a student's future.
 
 ## Prediction point and target
