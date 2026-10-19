@@ -1,6 +1,6 @@
-Anonymous Follow-Up ID,Current Semester / Academic Year,HSC / Equivalent GPA,Age at Enrollment,Mother's Occupation,Father's Occupation,Mother's Education,Father's Education,Gender,Scholarship Holder,Debtor,Tuition Fees Up to Date,Courses Enrolled,Evaluations Completed,Courses Passed,Semester GPA
-DEMO-LOWER-01,3rd Semester,4.50,19,Administrative staff,Unskilled workers,Secondary education (12th year),Secondary education (12th year),Female,Yes,No,Yes,6,7,6,3.70
-DEMO-ACADEMIC-02,3rd Semester,3.20,20,Teachers,Administrative staff,Secondary education (12th year),Secondary education (12th year),Male,No,No,Yes,7,3,2,1.65
-DEMO-FINANCIAL-03,5th Semester,4.10,21,Personal service workers,Vehicle drivers and mobile-equipment operators,Secondary education (12th year),Secondary education (12th year),Female,No,Yes,No,6,6,5,3.10
-DEMO-MIXED-04,5th Semester,2.70,22,Unskilled workers,Unskilled workers,Secondary education (12th year),Secondary education (12th year),Male,No,Yes,No,8,2,1,1.40
-DEMO-NORMAL-05,7th Semester,4.00,23,Teachers,Information and communication technology specialists,Secondary education (12th year),Secondary education (12th year),Female,No,No,Yes,5,6,4,3.25
+Anonymous Follow-Up ID,Current Semester / Academic Year,HSC / Equivalent GPA,Age at Enrollment,Mother's Occupation,Father's Occupation,Mother's Education,Father's Education,Gender,Marital Status,Scholarship Holder,Debtor,Tuition Fees Up to Date,Courses Enrolled,Evaluations Completed,Courses Passed,Semester GPA
+DEMO-LOWER-01,3rd Semester,4.50,19,Administrative staff,Unskilled workers,Secondary education (12th year),Secondary education (12th year),Female,Single,Yes,No,Yes,6,7,6,3.70
+DEMO-ACADEMIC-02,3rd Semester,3.20,20,Teachers,Administrative staff,Secondary education (12th year),Secondary education (12th year),Male,Single,No,No,Yes,7,3,2,1.65
+DEMO-FINANCIAL-03,5th Semester,4.10,21,Personal service workers,Vehicle drivers and mobile-equipment operators,Secondary education (12th year),Secondary education (12th year),Female,Single,No,Yes,No,6,6,5,3.10
+DEMO-MIXED-04,5th Semester,2.70,22,Unskilled workers,Unskilled workers,Secondary education (12th year),Secondary education (12th year),Male,Single,No,Yes,No,8,2,1,1.40
+DEMO-NORMAL-05,7th Semester,4.00,23,Teachers,Information and communication technology specialists,Secondary education (12th year),Secondary education (12th year),Female,Single,No,No,Yes,5,6,4,3.25
