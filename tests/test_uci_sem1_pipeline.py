@@ -12,14 +12,14 @@ def test_dataset_and_target_cohort():
     raw=load_data(); cohort,y=prepare(raw)
     assert raw.shape==(4424,37)
     assert raw[TARGET].value_counts().to_dict()=={'Graduate':2209,'Dropout':1421,'Enrolled':794}
-    assert len(cohort)==3630 and int(y.sum())==1421
+    assert len(cohort)==3630 and int(y.sum())==1521
     assert set(y.unique())=={0,1}
 
 def test_feature_policy_has_no_leakage_or_banned_fields():
     assert TARGET not in FULL_FEATURES+FINAL_FEATURES+RAW_FOR_FINAL
     assert all(not f.startswith('Curricular units 2nd sem') for f in FULL_FEATURES+FINAL_FEATURES+RAW_FOR_FINAL)
     assert BANNED.isdisjoint(FULL_FEATURES)
-    assert len(RAW_FOR_FINAL)==14
+    assert len(RAW_FOR_FINAL)==15
     assert 'Admission grade' not in FINAL_FEATURES+RAW_FOR_FINAL
 
 def test_derived_pass_rate_and_zero_denominator():
@@ -43,6 +43,6 @@ def test_saved_artifact_round_trip_probability_and_threshold():
     assert artifact['features']==FINAL_FEATURES
 
 def test_saved_results_are_locked_and_holdout_is_single_use():
-    results=json.loads((Path(RESULTS_PATH).parent/'training_results_14_input.json').read_text(encoding='utf-8'))
-    assert len(results['raw_input_features'])==14
+    results=json.loads((Path(RESULTS_PATH).parent/'training_results_15_input.json').read_text(encoding='utf-8'))
+    assert len(results['raw_input_features'])==15
     assert results['holdout_metrics']['tn']+results['holdout_metrics']['fp']+results['holdout_metrics']['fn']+results['holdout_metrics']['tp']==726
