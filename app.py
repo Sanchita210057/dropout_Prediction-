@@ -12,8 +12,8 @@ MODEL_PATH=ROOT/'models'/'uci_sem1'/'dropout_early_warning_model.joblib'
 METADATA_PATH=ROOT/'models'/'uci_sem1'/'model_metadata.json'
 THRESHOLD=None
 SOURCE_SEMESTER_GRADE_MAX=18.875
-FORM_FIELDS=['previous_academic_gpa_normalized','Age at enrollment',"Mother's occupation","Father's occupation","Mother's qualification","Father's qualification",'Gender','Scholarship holder','Debtor','Tuition fees up to date','Curricular units 1st sem (enrolled)','Curricular units 1st sem (evaluations)','Curricular units 1st sem (approved)','Curricular units 1st sem (grade)']
-USER_FIELDS=['HSC / Equivalent GPA','Age at Enrollment',"Mother's Occupation","Father's Occupation","Mother's Education","Father's Education",'Gender','Scholarship Holder','Debtor','Tuition Fees Up to Date','Courses Enrolled','Evaluations Completed','Courses Passed','Semester GPA']
+FORM_FIELDS=['previous_academic_gpa_normalized','Age at enrollment',"Mother's occupation","Father's occupation","Mother's qualification","Father's qualification",'Gender','Marital status','Scholarship holder','Debtor','Tuition fees up to date','Curricular units 1st sem (enrolled)','Curricular units 1st sem (evaluations)','Curricular units 1st sem (approved)','Curricular units 1st sem (grade)']
+USER_FIELDS=['HSC / Equivalent GPA','Age at Enrollment',"Mother's Occupation","Father's Occupation","Mother's Education","Father's Education",'Gender','Marital Status','Scholarship Holder','Debtor','Tuition Fees Up to Date','Courses Enrolled','Evaluations Completed','Courses Passed','Semester GPA']
 ID_COLUMN='Anonymous Follow-Up ID'
 SEMESTER_COLUMN='Current Semester / Academic Year'
 BATCH_COLUMNS=[ID_COLUMN,SEMESTER_COLUMN,*USER_FIELDS]
@@ -23,6 +23,14 @@ OCCUPATION_BY_LABEL={label:code for code,label in OCCUPATIONS.items()}
 EDUCATION_LEVELS={1:'Secondary education (12th year)',2:'Bachelor degree',3:'Higher education degree',4:'Master degree',5:'Doctorate',6:'Higher education (some)',9:'Incomplete secondary (12th year)',10:'Incomplete 11th year',11:'7th year (old)',12:'11th year (other)',14:'10th year',18:'General commerce course',19:'Basic education 3rd cycle',22:'Technical-professional course',26:'7th year',27:'2nd cycle general high school',29:'Incomplete 9th year',30:'8th year',34:'Unknown',35:'Cannot read or write',36:'Reads without 4th year',37:'Basic education 1st cycle',38:'Basic education 2nd cycle',39:'Technological specialization',40:'Higher degree (1st cycle)',41:'Specialized higher studies',42:'Professional higher technical',43:'Master (2nd cycle)',44:'Doctorate (3rd cycle)'}
 EDUCATION_BY_LABEL={label:code for code,label in EDUCATION_LEVELS.items()}
 GENDERS={'Female':0,'Male':1}
+MARITAL_STATUSES={'Single':1,'Married':2,'Widower':3,'Divorced':4,'De facto union':5,'Legally separated':6}
+MARITAL_BY_CODE={v:k for k,v in MARITAL_STATUSES.items()}
+def marital_code(value:Any)->int:
+    if value in MARITAL_STATUSES: return MARITAL_STATUSES[value]
+    try: code=int(float(value))
+    except (TypeError,ValueError): raise ValueError('must be a supported marital-status label or code')
+    if code not in MARITAL_BY_CODE: raise ValueError('must be a supported marital-status label or code')
+    return code
 def education_code(value:Any)->int:
     if value in EDUCATION_BY_LABEL: return EDUCATION_BY_LABEL[value]
     try: code=int(float(value))
@@ -40,14 +48,14 @@ def gender_code(value:Any)->int:
 @st.cache_resource
 def load_model_artifact()->dict[str,Any]:
     artifact=joblib.load(MODEL_PATH)
-    if artifact.get('raw_input_features')!=FORM_FIELDS or len(artifact.get('features',[]))!=14:
-        raise RuntimeError('The model has not been retrained for 14 inputs. Run: python -m src.train_uci_sem1_14')
+    if artifact.get('raw_input_features')!=FORM_FIELDS or len(artifact.get('features',[]))!=15:
+        raise RuntimeError('The model has not been retrained for 14 inputs. Run: python -m src.train_uci_sem1_15')
     return artifact
 
 def semester_gpa_to_source_grade(value:float)->float: return float(value)/4.0*SOURCE_SEMESTER_GRADE_MAX
 
 def make_input_frame(values:dict[str,Any])->pd.DataFrame:
-    if set(values)!=set(FORM_FIELDS): raise ValueError('Answers do not match the required 14-field form.')
+    if set(values)!=set(FORM_FIELDS): raise ValueError('Answers do not match the required 15-field form.')
     return pd.DataFrame([{field:values[field] for field in FORM_FIELDS}])
 
 def validate_inputs(values:dict[str,Any])->list[str]:
@@ -56,7 +64,7 @@ def validate_inputs(values:dict[str,Any])->list[str]:
 def dropout_probability(artifact:dict[str,Any],values:dict[str,Any])->float:
     pipeline=artifact['pipeline']; index=list(pipeline.classes_).index(1)
     if artifact.get('raw_input_features')!=FORM_FIELDS:
-        raise ValueError('The saved model does not support this 14-field assessment. Retrain it first.')
+        raise ValueError('The saved model does not support this 15-field assessment. Retrain it first.')
     return float(pipeline.predict_proba(make_input_frame(values))[0,index])
 
 def risk_label(probability:float,threshold:float|None=None)->str:
@@ -98,7 +106,7 @@ def occupation_code(value:Any)->int:
     return code
 
 def prepare_student(record:dict[str,Any])->dict[str,Any]:
-    return {'previous_academic_gpa_normalized':float(record['HSC / Equivalent GPA']),'Age at enrollment':int(record['Age at Enrollment']),"Mother's occupation":occupation_code(record["Mother's Occupation"]),"Father's occupation":occupation_code(record["Father's Occupation"]),"Mother's qualification":education_code(record["Mother's Education"]),"Father's qualification":education_code(record["Father's Education"]),'Gender':gender_code(record['Gender']),'Scholarship holder':int(parse_boolean(record['Scholarship Holder'])),'Debtor':int(parse_boolean(record['Debtor'])),'Tuition fees up to date':int(parse_boolean(record['Tuition Fees Up to Date'])),'Curricular units 1st sem (enrolled)':int(record['Courses Enrolled']),'Curricular units 1st sem (evaluations)':int(record['Evaluations Completed']),'Curricular units 1st sem (approved)':int(record['Courses Passed']),'Curricular units 1st sem (grade)':semester_gpa_to_source_grade(float(record['Semester GPA']))}
+    return {'previous_academic_gpa_normalized':float(record['HSC / Equivalent GPA']),'Age at enrollment':int(record['Age at Enrollment']),"Mother's occupation":occupation_code(record["Mother's Occupation"]),"Father's occupation":occupation_code(record["Father's Occupation"]),"Mother's qualification":education_code(record["Mother's Education"]),"Father's qualification":education_code(record["Father's Education"]),'Gender':gender_code(record['Gender']),'Marital status':marital_code(record['Marital Status']),'Scholarship holder':int(parse_boolean(record['Scholarship Holder'])),'Debtor':int(parse_boolean(record['Debtor'])),'Tuition fees up to date':int(parse_boolean(record['Tuition Fees Up to Date'])),'Curricular units 1st sem (enrolled)':int(record['Courses Enrolled']),'Curricular units 1st sem (evaluations)':int(record['Evaluations Completed']),'Curricular units 1st sem (approved)':int(record['Courses Passed']),'Curricular units 1st sem (grade)':semester_gpa_to_source_grade(float(record['Semester GPA']))}
 
 def predict_student(artifact:dict[str,Any],record:dict[str,Any])->dict[str,Any]:
     values=prepare_student(record); probability=dropout_probability(artifact,values); label=risk_label(probability,artifact['threshold'])
@@ -137,6 +145,8 @@ def validate_batch_dataframe(frame:pd.DataFrame)->pd.DataFrame:
         for column in ["Mother's Education","Father's Education"]:
             try: education_code(row[column])
             except ValueError as error: issues.append({'Row':position,'Issue':f'{column} {error}.'})
+        try: marital_code(row['Marital Status'])
+        except ValueError as error: issues.append({'Row':position,'Issue':f'Marital Status {error}.'})
         try: gender_code(row['Gender'])
         except ValueError as error: issues.append({'Row':position,'Issue':f'Gender {error}.'})
     return pd.DataFrame(issues,columns=['Row','Issue'])
@@ -161,7 +171,7 @@ def export_results(frame:pd.DataFrame)->bytes:
     return frame[[column for column in columns if column in frame.columns]].to_csv(index=False).encode('utf-8')
 
 def template_frame()->pd.DataFrame:
-    example={ID_COLUMN:'EXAMPLE-001',SEMESTER_COLUMN:'3rd Semester','HSC / Equivalent GPA':4.20,'Age at Enrollment':19,"Mother's Occupation":'Administrative staff',"Father's Occupation":'Unskilled workers','Scholarship Holder':'No','Debtor':'No','Tuition Fees Up to Date':'Yes','Courses Enrolled':6,'Evaluations Completed':6,'Courses Passed':5,'Semester GPA':3.25,"Mother's Education":'Secondary education (12th year)',"Father's Education":'Secondary education (12th year)','Gender':'Female'}
+    example={ID_COLUMN:'EXAMPLE-001',SEMESTER_COLUMN:'3rd Semester','HSC / Equivalent GPA':4.20,'Age at Enrollment':19,"Mother's Occupation":'Administrative staff',"Father's Occupation":'Unskilled workers','Scholarship Holder':'No','Debtor':'No','Tuition Fees Up to Date':'Yes','Courses Enrolled':6,'Evaluations Completed':6,'Courses Passed':5,'Semester GPA':3.25,"Mother's Education":'Secondary education (12th year)',"Father's Education":'Secondary education (12th year)','Gender':'Female','Marital Status':'Single'}
     return pd.DataFrame([example],columns=BATCH_COLUMNS)
 
 def template_csv()->bytes:
@@ -203,7 +213,7 @@ def navigate(page:str)->None: st.session_state['page_selector']=page
 
 def dashboard()->None:
     st.markdown('''<div class="hero"><div class="hero-kicker">ACADEMIC INTELLIGENCE · EARLY WARNING</div><h1>Student Dropout Early Warning System</h1><h2>AI-powered student support dashboard for early academic intervention</h2><p>Identify potentially at-risk students and coordinate earlier support using academic, financial, and background information.</p></div>''',unsafe_allow_html=True)
-    metric_cards([('Random Forest','ML Model','◈'),('14','Student Factors','◆'),('14 inputs','Model','◉'),('Portugal','Dataset','↗')])
+    metric_cards([('Random Forest','ML Model','◈'),('15','Student Factors','◆'),('14 inputs','Model','◉'),('Portugal','Dataset','↗')])
     st.markdown('<div class="process-strip"><span>Student Data</span><b>→</b><span>Risk Analysis</span><b>→</b><span>Warning Indicators</span><b>→</b><span>Support Action</span></div>',unsafe_allow_html=True)
     c1,c2=st.columns(2,gap='large')
     c1.markdown('<div class="action-copy"><b>Individual screening</b><span>Review one student with an immediate support summary.</span></div>',unsafe_allow_html=True)
@@ -234,12 +244,12 @@ def individual_assessment(artifact:dict[str,Any])->None:
         section_heading('Student Background','01'); c1,c2=st.columns(2); previous=c1.number_input('HSC / Equivalent GPA',2.50,5.00,3.50,step=0.01); age=c2.number_input('Age at Enrollment',17,70,19)
         section_heading('Family Background','02'); c1,c2=st.columns(2); labels=list(OCCUPATION_BY_LABEL); mother=c1.selectbox("Mother’s Occupation",labels,index=labels.index('Unskilled workers')); father=c2.selectbox("Father’s Occupation",labels,index=labels.index('Unskilled workers'))
         c1,c2=st.columns(2); education_labels=list(EDUCATION_BY_LABEL); mother_education=c1.selectbox("Mother’s Education",education_labels); father_education=c2.selectbox("Father’s Education",education_labels)
-        gender=st.selectbox('Gender',list(GENDERS))
+        gender=st.selectbox('Gender',list(GENDERS)); marital=st.selectbox('Marital Status',list(MARITAL_STATUSES))
         section_heading('Financial Status','03'); c1,c2,c3=st.columns(3); scholarship=c1.selectbox('Scholarship Holder',['No','Yes']); debtor=c2.selectbox('Debtor',['No','Yes']); tuition=c3.selectbox('Tuition Fees Up to Date',['No','Yes'])
         section_heading('Recent Semester Performance','04'); c1,c2,c3,c4=st.columns(4); enrolled=c1.number_input('Courses Enrolled',0,26,6); evaluations=c2.number_input('Evaluations Completed',0,45,8); passed=c3.number_input('Courses Passed',0,26,5); semester_gpa=c4.number_input('Semester GPA',0.00,4.00,3.00,step=0.01)
         submitted=st.form_submit_button('Run Risk Assessment',type='primary',use_container_width=True)
     if submitted:
-        record={'HSC / Equivalent GPA':previous,'Age at Enrollment':age,"Mother's Occupation":mother,"Father's Occupation":father,"Mother's Education":mother_education,"Father's Education":father_education,'Gender':gender,'Scholarship Holder':scholarship,'Debtor':debtor,'Tuition Fees Up to Date':tuition,'Courses Enrolled':enrolled,'Evaluations Completed':evaluations,'Courses Passed':passed,'Semester GPA':semester_gpa}
+        record={'HSC / Equivalent GPA':previous,'Age at Enrollment':age,"Mother's Occupation":mother,"Father's Occupation":father,"Mother's Education":mother_education,"Father's Education":father_education,'Gender':gender,'Marital Status':marital,'Scholarship Holder':scholarship,'Debtor':debtor,'Tuition Fees Up to Date':tuition,'Courses Enrolled':enrolled,'Evaluations Completed':evaluations,'Courses Passed':passed,'Semester GPA':semester_gpa}
         if passed>enrolled: st.error('Courses Passed cannot be greater than Courses Enrolled.'); return
         render_result(predict_student(artifact,record),student_id.strip() or 'Individual Assessment')
 
@@ -290,9 +300,9 @@ def about()->None:
     with c1:
         info_card('Purpose','Identify students who may benefit from timely academic or financial follow-up.')
         info_card('Dataset','UCI Predict Students’ Dropout and Academic Success · 4,424 original records · 3,630 resolved outcomes.')
-        info_card('Model','Random Forest · 14 student factors · threshold selected during training.')
+        info_card('Model','Random Forest · 15 student factors · threshold selected during training.')
     with c2:
-        info_card('Performance','Refer to the 14-input training evaluation report; earlier 11-input metrics do not apply.')
+        info_card('Performance','Refer to the 15-input training evaluation report; earlier 11-input metrics do not apply.')
         info_card('How Risk Indicators Work','A separate deterministic layer summarizes relevant academic and financial warnings. They are not causal explanations.')
         info_card('Local Data Collection','Anonymous campus records can support local pattern analysis, later validation, and future retraining once outcomes are linked.')
     info_card('Limitations','Training data originate from Portuguese higher education and are not externally validated in Bangladesh. Source academic variables describe first-semester performance. Local longitudinal outcomes are required before retraining. Predictions support—not replace—human judgement.')
@@ -311,7 +321,7 @@ def style()->None:
 
 def main()->None:
     st.set_page_config(page_title='Student Dropout Early Warning System',page_icon='🎓',layout='wide',initial_sidebar_state='expanded'); style(); artifact=load_model_artifact()
-    pages=['Dashboard','Individual Assessment','Batch Analysis','About Project']; st.sidebar.markdown('### ◈ Early Warning'); st.sidebar.caption('STUDENT SUCCESS INTELLIGENCE'); page=st.sidebar.radio('Navigate',pages,key='page_selector',label_visibility='collapsed'); st.sidebar.markdown('---'); st.sidebar.caption('Local academic prototype · 14-input Random Forest')
+    pages=['Dashboard','Individual Assessment','Batch Analysis','About Project']; st.sidebar.markdown('### ◈ Early Warning'); st.sidebar.caption('STUDENT SUCCESS INTELLIGENCE'); page=st.sidebar.radio('Navigate',pages,key='page_selector',label_visibility='collapsed'); st.sidebar.markdown('---'); st.sidebar.caption('Local academic prototype · 15-input Random Forest')
     if page=='Dashboard': dashboard()
     elif page=='Individual Assessment': individual_assessment(artifact)
     elif page=='Batch Analysis': batch_analysis(artifact)
