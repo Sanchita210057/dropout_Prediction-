@@ -15,14 +15,14 @@ from app import (BATCH_COLUMNS,FORM_FIELDS,ID_COLUMN,METADATA_PATH,MODEL_PATH,OC
 from src.uci_sem1_features import normalize_previous_grade
 
 ROOT=Path(__file__).resolve().parents[1]
-RESULTS_PATH=ROOT/'reports'/'uci_sem1'/'training_results_14_input.json'
+RESULTS_PATH=ROOT/'reports'/'uci_sem1'/'training_results_15_input.json'
 
 def sample_values(**overrides):
-    values={'previous_academic_gpa_normalized':3.5,'Age at enrollment':19,"Mother's occupation":9,"Father's occupation":9,"Mother's qualification":1,"Father's qualification":1,'Gender':0,'Scholarship holder':0,'Debtor':0,'Tuition fees up to date':1,'Curricular units 1st sem (enrolled)':6,'Curricular units 1st sem (evaluations)':8,'Curricular units 1st sem (approved)':5,'Curricular units 1st sem (grade)':12.0}
+    values={'previous_academic_gpa_normalized':3.5,'Age at enrollment':19,"Mother's occupation":9,"Father's occupation":9,"Mother's qualification":1,"Father's qualification":1,'Gender':0,'Marital status':1,'Scholarship holder':0,'Debtor':0,'Tuition fees up to date':1,'Curricular units 1st sem (enrolled)':6,'Curricular units 1st sem (evaluations)':8,'Curricular units 1st sem (approved)':5,'Curricular units 1st sem (grade)':12.0}
     values.update(overrides); return values
 
 def student(**overrides):
-    row={ID_COLUMN:'ST001',SEMESTER_COLUMN:'3rd Semester','HSC / Equivalent GPA':4.2,'Age at Enrollment':19,"Mother's Occupation":'Administrative staff',"Father's Occupation":'Unskilled workers',"Mother's Education":'Secondary education (12th year)',"Father's Education":'Secondary education (12th year)','Gender':'Female','Scholarship Holder':'No','Debtor':'No','Tuition Fees Up to Date':'Yes','Courses Enrolled':6,'Evaluations Completed':6,'Courses Passed':5,'Semester GPA':3.25}
+    row={ID_COLUMN:'ST001',SEMESTER_COLUMN:'3rd Semester','HSC / Equivalent GPA':4.2,'Age at Enrollment':19,"Mother's Occupation":'Administrative staff',"Father's Occupation":'Unskilled workers',"Mother's Education":'Secondary education (12th year)',"Father's Education":'Secondary education (12th year)','Gender':'Female','Marital Status':'Single','Scholarship Holder':'No','Debtor':'No','Tuition Fees Up to Date':'Yes','Courses Enrolled':6,'Evaluations Completed':6,'Courses Passed':5,'Semester GPA':3.25}
     row.update(overrides); return row
 
 def guidance(**overrides):
@@ -30,7 +30,7 @@ def guidance(**overrides):
     values.update(overrides); return support_guidance(**values)
 
 def test_model_schema_artifact_and_threshold_are_locked():
-    assert len(FORM_FIELDS)==len(USER_FIELDS)==14
+    assert len(FORM_FIELDS)==len(USER_FIELDS)==15
     assert MODEL_PATH.is_file()
     artifact=joblib.load(MODEL_PATH); metadata=json.loads(METADATA_PATH.read_text(encoding='utf-8'))
     assert artifact['threshold']==metadata['threshold'] and 0<artifact['threshold']<1
@@ -116,7 +116,7 @@ def test_no_retraining_or_persistent_upload_storage_in_app():
     assert '.fit(' not in source and 'to_pickle(' not in source and 'to_parquet(' not in source
     assert 'st.image(' not in source and 'st.pyplot(' not in source
 
-def test_four_pages_render_and_individual_form_has_14_model_widgets():
+def test_four_pages_render_and_individual_form_has_15_model_widgets():
     app=AppTest.from_file(str(ROOT/'app.py'),default_timeout=30).run()
     expected={'Dashboard':'Student Dropout Early Warning System','Individual Assessment':'Individual Assessment','Batch Analysis':'Batch Analysis','About Project':'About Project'}
     assert list(app.radio[0].options)==list(expected)
@@ -125,7 +125,7 @@ def test_four_pages_render_and_individual_form_has_14_model_widgets():
         rendered=' '.join([*(item.value for item in app.title),*(item.value for item in app.markdown)])
         assert title.lower() in rendered.lower()
     app.radio[0].set_value('Individual Assessment').run()
-    assert len(app.number_input)+len(app.selectbox)==14
+    assert len(app.number_input)+len(app.selectbox)==15
     assert next(item for item in app.number_input if item.label=='Semester GPA').max==4.0
 
 def test_elevated_result_panel_and_download_render():
