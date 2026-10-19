@@ -244,7 +244,7 @@ def individual_assessment(artifact:dict[str,Any])->None:
         section_heading('Student Background','01'); c1,c2=st.columns(2); previous=c1.number_input('HSC / Equivalent GPA',2.50,5.00,3.50,step=0.01); age=c2.number_input('Age at Enrollment',17,70,19)
         section_heading('Family Background','02'); c1,c2=st.columns(2); labels=list(OCCUPATION_BY_LABEL); mother=c1.selectbox("Mother’s Occupation",labels,index=labels.index('Unskilled workers')); father=c2.selectbox("Father’s Occupation",labels,index=labels.index('Unskilled workers'))
         c1,c2=st.columns(2); education_labels=list(EDUCATION_BY_LABEL); mother_education=c1.selectbox("Mother’s Education",education_labels); father_education=c2.selectbox("Father’s Education",education_labels)
-        gender=st.selectbox('Gender',list(GENDERS)); marital=st.selectbox('Marital Status',list(MARITAL_STATUSES))
+        gender=st.selectbox('Gender',list(GENDERS)); marital=st.selectbox('Marital Status',[status for status in MARITAL_STATUSES if status!='De facto union'])
         section_heading('Financial Status','03'); c1,c2,c3=st.columns(3); scholarship=c1.selectbox('Scholarship Holder',['No','Yes']); debtor=c2.selectbox('Debtor',['No','Yes']); tuition=c3.selectbox('Tuition Fees Up to Date',['No','Yes'])
         section_heading('Recent Semester Performance','04'); c1,c2,c3,c4=st.columns(4); enrolled=c1.number_input('Courses Enrolled',0,26,6); evaluations=c2.number_input('Evaluations Completed',0,45,8); passed=c3.number_input('Courses Passed',0,26,5); semester_gpa=c4.number_input('Semester GPA',0.00,4.00,3.00,step=0.01)
         submitted=st.form_submit_button('Run Risk Assessment',type='primary',use_container_width=True)
