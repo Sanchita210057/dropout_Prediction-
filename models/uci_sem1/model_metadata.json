@@ -2,12 +2,16 @@
   "title": "Student Dropout Early Warning System Using Machine Learning",
   "model": "Random Forest",
   "prediction_point": "End of first semester",
-  "threshold": 0.48,
+  "threshold": 0.52,
   "features": [
     "previous_academic_gpa_normalized",
     "Age at enrollment",
     "Mother's occupation",
     "Father's occupation",
+    "Mother's qualification",
+    "Father's qualification",
+    "Gender",
+    "Marital status",
     "Scholarship holder",
     "Debtor",
     "Tuition fees up to date",
@@ -21,6 +25,10 @@
     "Age at enrollment",
     "Mother's occupation",
     "Father's occupation",
+    "Mother's qualification",
+    "Father's qualification",
+    "Gender",
+    "Marital status",
     "Scholarship holder",
     "Debtor",
     "Tuition fees up to date",
@@ -43,5 +51,5 @@
     "python": "3.14.5",
     "scikit_learn": "1.9.1"
   },
-  "limitation": "Scale normalization is numerical only; cross-country academic equivalence is not claimed."
+  "limitation": "Portugal university students only; not validated for Bangladesh."
 }
