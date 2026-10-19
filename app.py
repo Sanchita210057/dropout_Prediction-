@@ -38,7 +38,11 @@ def gender_code(value:Any)->int:
 
 
 @st.cache_resource
-def load_model_artifact()->dict[str,Any]: return joblib.load(MODEL_PATH)
+def load_model_artifact()->dict[str,Any]:
+    artifact=joblib.load(MODEL_PATH)
+    if artifact.get('raw_input_features')!=FORM_FIELDS or len(artifact.get('features',[]))!=14:
+        raise RuntimeError('The model has not been retrained for 14 inputs. Run: python -m src.train_uci_sem1_14')
+    return artifact
 
 def semester_gpa_to_source_grade(value:float)->float: return float(value)/4.0*SOURCE_SEMESTER_GRADE_MAX
 
@@ -51,6 +55,8 @@ def validate_inputs(values:dict[str,Any])->list[str]:
 
 def dropout_probability(artifact:dict[str,Any],values:dict[str,Any])->float:
     pipeline=artifact['pipeline']; index=list(pipeline.classes_).index(1)
+    if artifact.get('raw_input_features')!=FORM_FIELDS:
+        raise ValueError('The saved model does not support this 14-field assessment. Retrain it first.')
     return float(pipeline.predict_proba(make_input_frame(values))[0,index])
 
 def risk_label(probability:float,threshold:float|None=None)->str:
@@ -155,7 +161,7 @@ def export_results(frame:pd.DataFrame)->bytes:
     return frame[[column for column in columns if column in frame.columns]].to_csv(index=False).encode('utf-8')
 
 def template_frame()->pd.DataFrame:
-    example={ID_COLUMN:'EXAMPLE-001',SEMESTER_COLUMN:'3rd Semester','HSC / Equivalent GPA':4.20,'Age at Enrollment':19,"Mother's Occupation":'Administrative staff',"Father's Occupation":'Unskilled workers','Scholarship Holder':'No','Debtor':'No','Tuition Fees Up to Date':'Yes','Courses Enrolled':6,'Evaluations Completed':6,'Courses Passed':5,'Semester GPA':3.25,"Mother's Education":'Secondary education - 12th year or equivalent',"Father's Education":'Secondary education - 12th year or equivalent','Gender':'Female'}
+    example={ID_COLUMN:'EXAMPLE-001',SEMESTER_COLUMN:'3rd Semester','HSC / Equivalent GPA':4.20,'Age at Enrollment':19,"Mother's Occupation":'Administrative staff',"Father's Occupation":'Unskilled workers','Scholarship Holder':'No','Debtor':'No','Tuition Fees Up to Date':'Yes','Courses Enrolled':6,'Evaluations Completed':6,'Courses Passed':5,'Semester GPA':3.25,"Mother's Education":'Secondary education (12th year)',"Father's Education":'Secondary education (12th year)','Gender':'Female'}
     return pd.DataFrame([example],columns=BATCH_COLUMNS)
 
 def template_csv()->bytes:
@@ -305,7 +311,7 @@ def style()->None:
 
 def main()->None:
     st.set_page_config(page_title='Student Dropout Early Warning System',page_icon='🎓',layout='wide',initial_sidebar_state='expanded'); style(); artifact=load_model_artifact()
-    pages=['Dashboard','Individual Assessment','Batch Analysis','About Project']; st.sidebar.markdown('### ◈ Early Warning'); st.sidebar.caption('STUDENT SUCCESS INTELLIGENCE'); page=st.sidebar.radio('Navigate',pages,key='page_selector',label_visibility='collapsed'); st.sidebar.markdown('---'); st.sidebar.caption('Local academic prototype · Model threshold 0.48')
+    pages=['Dashboard','Individual Assessment','Batch Analysis','About Project']; st.sidebar.markdown('### ◈ Early Warning'); st.sidebar.caption('STUDENT SUCCESS INTELLIGENCE'); page=st.sidebar.radio('Navigate',pages,key='page_selector',label_visibility='collapsed'); st.sidebar.markdown('---'); st.sidebar.caption('Local academic prototype · 14-input Random Forest')
     if page=='Dashboard': dashboard()
     elif page=='Individual Assessment': individual_assessment(artifact)
     elif page=='Batch Analysis': batch_analysis(artifact)
