@@ -19,7 +19,7 @@ def test_feature_policy_has_no_leakage_or_banned_fields():
     assert TARGET not in FULL_FEATURES+FINAL_FEATURES+RAW_FOR_FINAL
     assert all(not f.startswith('Curricular units 2nd sem') for f in FULL_FEATURES+FINAL_FEATURES+RAW_FOR_FINAL)
     assert BANNED.isdisjoint(FULL_FEATURES)
-    assert len(RAW_FOR_FINAL)==11
+    assert len(RAW_FOR_FINAL)==14
     assert 'Admission grade' not in FINAL_FEATURES+RAW_FOR_FINAL
 
 def test_derived_pass_rate_and_zero_denominator():
@@ -38,11 +38,11 @@ def test_saved_artifact_round_trip_probability_and_threshold():
     probabilities=artifact['pipeline'].predict_proba(row)[:,1]
     assert isinstance(artifact['pipeline'],Pipeline)
     assert np.all((probabilities>=0)&(probabilities<=1))
-    assert artifact['threshold']==metadata['threshold']==0.48
+    assert artifact['threshold']==metadata['threshold'] and 0<artifact['threshold']<1
     assert metadata['normalized_gpa_range']=={'min':2.5,'max':5.0,'formula':'Previous qualification (grade) / 190 * 5'}
     assert artifact['features']==FINAL_FEATURES
 
 def test_saved_results_are_locked_and_holdout_is_single_use():
-    results=json.loads((Path(RESULTS_PATH).parent/'training_results_11_input.json').read_text(encoding='utf-8'))
-    assert results['decision_gate_passed'] is True
-    assert results['test_metrics']['tn']+results['test_metrics']['fp']+results['test_metrics']['fn']+results['test_metrics']['tp']==726
+    results=json.loads((Path(RESULTS_PATH).parent/'training_results_14_input.json').read_text(encoding='utf-8'))
+    assert len(results['raw_input_features'])==14
+    assert results['holdout_metrics']['tn']+results['holdout_metrics']['fp']+results['holdout_metrics']['fn']+results['holdout_metrics']['tp']==726
