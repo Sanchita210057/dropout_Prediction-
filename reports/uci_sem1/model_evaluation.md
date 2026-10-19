@@ -1,4 +1,6 @@
-# Final 11-Input Semester-1 Model Evaluation
+# Historical 11-Input Semester-1 Model Evaluation
+
+> **Superseded:** The following figures belong only to the previous 11-input model and are not results for the active system. The current 15-input evaluation is in `training_results_15_input.json` and summarized in `docs/14_input_migration.md`.
 
 The final Random Forest retains the same 3,630 resolved-outcome cohort, stratified 80/20 split (`random_state=42`), preprocessing, hyperparameters, repeated 5-fold CV strategy, and end-of-Semester-1 leakage policy as the validated 12-input model. Admission Grade is excluded. Previous Qualification Grade is normalized during training as `grade / 190 × 5` and renamed `previous_academic_gpa_normalized`; observed support is exactly 2.50–5.00.
 

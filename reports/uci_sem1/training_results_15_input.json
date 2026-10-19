@@ -1,0 +1,106 @@
+{
+  "model": "Random Forest",
+  "raw_input_features": [
+    "previous_academic_gpa_normalized",
+    "Age at enrollment",
+    "Mother's occupation",
+    "Father's occupation",
+    "Mother's qualification",
+    "Father's qualification",
+    "Gender",
+    "Marital status",
+    "Scholarship holder",
+    "Debtor",
+    "Tuition fees up to date",
+    "Curricular units 1st sem (enrolled)",
+    "Curricular units 1st sem (evaluations)",
+    "Curricular units 1st sem (grade)",
+    "Curricular units 1st sem (approved)"
+  ],
+  "derived_features": [
+    "previous_academic_gpa_normalized",
+    "Age at enrollment",
+    "Mother's occupation",
+    "Father's occupation",
+    "Mother's qualification",
+    "Father's qualification",
+    "Gender",
+    "Marital status",
+    "Scholarship holder",
+    "Debtor",
+    "Tuition fees up to date",
+    "Curricular units 1st sem (enrolled)",
+    "Curricular units 1st sem (evaluations)",
+    "Curricular units 1st sem (grade)",
+    "Semester pass rate"
+  ],
+  "training_rows": 2904,
+  "holdout_rows": 726,
+  "cv": {
+    "roc_auc": {
+      "mean": 0.9242070630046539,
+      "std": 0.015261709179349343
+    },
+    "average_precision": {
+      "mean": 0.9184719499335948,
+      "std": 0.015543592224722362
+    },
+    "precision": {
+      "mean": 0.85071893558788,
+      "std": 0.00839897244972842
+    },
+    "recall": {
+      "mean": 0.8267659788237113,
+      "std": 0.03032711110145342
+    },
+    "f1": {
+      "mean": 0.8383125375389971,
+      "std": 0.016669912234053657
+    },
+    "balanced_accuracy": {
+      "mean": 0.8666927955929348,
+      "std": 0.01422033111961897
+    }
+  },
+  "threshold_selection": {
+    "source": "Training-only out-of-fold probabilities from shuffled stratified 5-fold CV",
+    "objective": "Highest F1, then balanced accuracy, among thresholds with recall >= 0.78 and precision >= 0.60",
+    "threshold": 0.52
+  },
+  "selected_threshold_training_metrics": {
+    "threshold": 0.52,
+    "accuracy": 0.8805096418732782,
+    "balanced_accuracy": 0.8699829623424464,
+    "precision": 0.8664192949907236,
+    "recall": 0.8214599824098505,
+    "f1": 0.8433408577878104,
+    "roc_auc": 0.9233390025977076,
+    "average_precision": 0.9173785164483274,
+    "brier_score": 0.10408136852777303,
+    "tn": 1623,
+    "fp": 144,
+    "fn": 203,
+    "tp": 934
+  },
+  "holdout_metrics": {
+    "threshold": 0.52,
+    "accuracy": 0.8787878787878788,
+    "balanced_accuracy": 0.8752788222547958,
+    "precision": 0.8356164383561644,
+    "recall": 0.8591549295774648,
+    "f1": 0.8472222222222222,
+    "roc_auc": 0.9412322350391944,
+    "average_precision": 0.9311178004255825,
+    "brier_score": 0.10106996230397451,
+    "tn": 394,
+    "fp": 48,
+    "fn": 40,
+    "tp": 244
+  },
+  "holdout_note": "Previously consulted by earlier project iterations: this is not a pristine external validation set.",
+  "scope_note": "Portugal university students only; not validated for Bangladesh.",
+  "versions": {
+    "python": "3.14.5",
+    "scikit_learn": "1.9.1"
+  }
+}

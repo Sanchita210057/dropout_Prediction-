@@ -1,5 +1,7 @@
 # Future Semester-1 Website Form Plan
 
+> **Historical and superseded:** This form plan documents the previous 11-input system and its 0.48 threshold. The active application uses the 15-input model with threshold 0.52. See `docs/14_input_migration.md` and `reports/uci_sem1/training_results_15_input.json` for current specifications and results.
+
 ## Workflow
 
 Student completes Semester 1 → department enters available information → saved model estimates later dropout risk → result is **Lower Estimated Risk** or **Elevated Estimated Risk** → staff may consider supportive follow-up.

@@ -1,4 +1,6 @@
-# Final Usability Feature Decision
+# Historical Feature-Usability Decision (11-input model)
+
+> **Superseded:** This report documents the prior 11-input Random Forest feature decision. The active system is now the 15-input model. None of the 11-input metrics below are results for the active model; see `training_results_15_input.json` and `docs/14_input_migration.md` for current results.
 
 The validated 12-input Random Forest was compared with an 11-input version using the same training partition and repeated cross-validation. The new form removes Admission Grade and replaces the raw 95–190 Previous Qualification Grade with a native 2.50–5.00 model input:
 
