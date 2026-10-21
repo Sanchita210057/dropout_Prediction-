@@ -6,18 +6,35 @@ import io
 import joblib
 import pandas as pd
 import streamlit as st
+from src.bangladesh_collection import (
+    EXPORT_COLUMNS as BD_EXPORT_COLUMNS,
+    FIELD_TITLES as BD_FIELD_TITLES,
+    CATEGORICAL_CHOICES as BD_CATEGORICAL_CHOICES,
+    PREDICTOR_FIELDS as BD_PREDICTOR_FIELDS,
+    STATUS_FIELD as BD_STATUS_FIELD,
+    STATUS_TITLE as BD_STATUS_TITLE,
+    ACADEMIC_STATUS_OPTIONS as BD_ACADEMIC_STATUS_OPTIONS,
+    PARENT_OCCUPATIONS as BD_PARENT_OCCUPATIONS,
+    FINANCIAL_CONDITION_OPTIONS as BD_FINANCIAL_OPTIONS,
+    STUDENT_EMPLOYMENT_OPTIONS as BD_EMPLOYMENT_OPTIONS,
+    academic_status_target,
+    clean_google_forms_responses,
+    questionnaire_template_frame,
+    validate_bangladesh_responses,
+)
 
 ROOT=Path(__file__).resolve().parent
-MODEL_PATH=ROOT/'models'/'uci_sem1'/'dropout_early_warning_model.joblib'
-METADATA_PATH=ROOT/'models'/'uci_sem1'/'model_metadata.json'
+MODEL_PATH=ROOT/'models'/'combined_uci_bangladesh_18_v2'/'weighted_ensemble_dropout_status_18.joblib'
+METADATA_PATH=ROOT/'models'/'combined_uci_bangladesh_18_v2'/'model_metadata.json'
 THRESHOLD=None
-SOURCE_SEMESTER_GRADE_MAX=18.875
-FORM_FIELDS=['previous_academic_gpa_normalized','Age at enrollment',"Mother's occupation","Father's occupation","Mother's qualification","Father's qualification",'Gender','Marital status','Scholarship holder','Debtor','Tuition fees up to date','Curricular units 1st sem (enrolled)','Curricular units 1st sem (evaluations)','Curricular units 1st sem (grade)','Curricular units 1st sem (approved)']
-USER_FIELDS=['HSC / Equivalent GPA','Age at Enrollment',"Mother's Occupation","Father's Occupation","Mother's Education","Father's Education",'Gender','Marital Status','Scholarship Holder','Debtor','Tuition Fees Up to Date','Courses Enrolled','Evaluations Completed','Courses Passed','Semester GPA']
+FORM_FIELDS=list(BD_PREDICTOR_FIELDS)
+USER_FIELDS=[BD_FIELD_TITLES[field] for field in FORM_FIELDS]
+USER_FIELD_TO_KEY=dict(zip(USER_FIELDS,FORM_FIELDS))
 ID_COLUMN='Anonymous Follow-Up ID'
 SEMESTER_COLUMN='Current Semester / Academic Year'
 BATCH_COLUMNS=[ID_COLUMN,SEMESTER_COLUMN,*USER_FIELDS]
-RESULT_COLUMNS=[ID_COLUMN,SEMESTER_COLUMN,'Estimated Dropout Risk','Risk Level','Main Indicator','Key Risk Indicators','Suggested Institute Support']
+RESULT_COLUMNS=[ID_COLUMN,SEMESTER_COLUMN,'Estimated Current Dropout-Status Probability','UCI Academic Foundation Signal (research estimate)','Bangladesh Local Model Signal (research estimate)','Risk Level','Main Indicator','Key Risk Indicators','Suggested Institute Support']
+APP_PAGES=['Dashboard','Individual Assessment','Batch Analysis','About Project','Bangladesh Data Collection']
 OCCUPATIONS={0:'Student',1:'Legislative/executive representatives, directors and managers',2:'Intellectual and scientific specialists',3:'Intermediate-level technicians and professions',4:'Administrative staff',5:'Personal services, security and sales workers',6:'Skilled agriculture, fisheries and forestry workers',7:'Skilled industry, construction and craft workers',8:'Machine operators and assembly workers',9:'Unskilled workers',10:'Armed Forces',90:'Other situation',99:'Unspecified',101:'Armed Forces officers',102:'Armed Forces sergeants',103:'Other Armed Forces personnel',112:'Administrative and commercial services directors',114:'Hotel, catering, trade and other service directors',121:'Physical sciences, mathematics and engineering specialists',122:'Health professionals',123:'Teachers',124:'Finance, administration and commercial specialists',125:'Information and communication technology specialists',131:'Intermediate science and engineering technicians',132:'Intermediate health technicians',134:'Intermediate legal, social, cultural and sports services',135:'Information and communication technology technicians',141:'Office, secretarial and data-processing workers',143:'Data, accounting, statistics and financial operators',144:'Other administrative support staff',151:'Personal service workers',152:'Sellers',153:'Personal care workers',154:'Protection and security personnel',161:'Market-oriented farmers and skilled agricultural workers',163:'Subsistence farmers, fishers, hunters and gatherers',171:'Skilled construction workers (except electricians)',172:'Skilled metallurgy and metalworking workers',173:'Printing, precision, jewellery and craft workers',174:'Skilled electrical and electronics workers',175:'Food, wood, clothing and other craft workers',181:'Fixed-plant and machine operators',182:'Assembly workers',183:'Vehicle drivers and mobile-equipment operators',191:'Cleaning workers',192:'Unskilled agriculture, fisheries and forestry workers',193:'Unskilled extractive, construction, manufacturing and transport workers',194:'Meal preparation assistants',195:'Street vendors and service providers'}
 OCCUPATION_BY_LABEL={label:code for code,label in OCCUPATIONS.items()}
 EDUCATION_LEVELS={1:'Secondary education (12th year)',2:'Bachelor degree',3:'Higher education degree',4:'Master degree',5:'Doctorate',6:'Higher education (some)',9:'Incomplete secondary (12th year)',10:'Incomplete 11th year',11:'7th year (old)',12:'11th year (other)',14:'10th year',18:'General commerce course',19:'Basic education 3rd cycle',22:'Technical-professional course',26:'7th year',27:'2nd cycle general high school',29:'Incomplete 9th year',30:'8th year',34:'Unknown',35:'Cannot read or write',36:'Reads without 4th year',37:'Basic education 1st cycle',38:'Basic education 2nd cycle',39:'Technological specialization',40:'Higher degree (1st cycle)',41:'Specialized higher studies',42:'Professional higher technical',43:'Master (2nd cycle)',44:'Doctorate (3rd cycle)'}
@@ -47,24 +64,50 @@ def gender_code(value:Any)->int:
 
 @st.cache_resource
 def load_model_artifact()->dict[str,Any]:
+    if not MODEL_PATH.is_file():
+        raise RuntimeError(f'Combined UCI + Bangladesh 18-input model artifact is missing: {MODEL_PATH}. Run: python -m src.train_combined_ensemble_18')
     artifact=joblib.load(MODEL_PATH)
-    if artifact.get('raw_input_features')!=FORM_FIELDS or len(artifact.get('features',[]))!=15:
-        raise RuntimeError('The active model does not match the required 15-input schema. Run: python -m src.train_uci_sem1_15')
+    pipeline_fields=list(getattr(artifact.get('pipeline'),'feature_names_in_',[]))
+    if (artifact.get('raw_input_features')!=FORM_FIELDS or pipeline_fields!=FORM_FIELDS
+            or artifact.get('input_feature_count')!=18 or artifact.get('target_is_predictor') is not False
+            or artifact.get('target_field')!=BD_STATUS_FIELD
+            or artifact.get('architecture','').startswith('UCI 10-feature') is False
+            or getattr(artifact.get('pipeline'),'blend_weight_uci',0)<=0):
+        raise RuntimeError('The active combined model does not match the exact 18-input schema or lacks a UCI contribution. Run: python -m src.train_combined_ensemble_18')
     return artifact
 
-def semester_gpa_to_source_grade(value:float)->float: return float(value)/4.0*SOURCE_SEMESTER_GRADE_MAX
-
 def make_input_frame(values:dict[str,Any])->pd.DataFrame:
-    if set(values)!=set(FORM_FIELDS): raise ValueError('Answers do not match the required 15-field form.')
-    return pd.DataFrame([{field:values[field] for field in FORM_FIELDS}])
+    if set(values)!=set(FORM_FIELDS): raise ValueError('Answers must contain exactly the 18 model input fields.')
+    normalized=clean_google_forms_responses(pd.DataFrame([{field:values[field] for field in FORM_FIELDS}]))
+    frame=normalized.loc[:,FORM_FIELDS].copy()
+    for field in FORM_FIELDS:
+        if field in BD_CATEGORICAL_CHOICES:
+            frame[field]=frame[field].astype(object).where(frame[field].notna(),float('nan'))
+        else:
+            frame[field]=pd.to_numeric(frame[field],errors='coerce').astype(float)
+    return frame
 
 def validate_inputs(values:dict[str,Any])->list[str]:
-    return ['Courses Passed cannot be greater than Courses Enrolled.'] if values['Curricular units 1st sem (approved)']>values['Curricular units 1st sem (enrolled)'] else []
+    issues=[]
+    if set(values)!=set(FORM_FIELDS): return ['Answers must contain exactly the 18 model input fields.']
+    if values['courses_passed']>values['courses_enrolled']: issues.append('Courses passed cannot be greater than courses enrolled.')
+    for field,low,high in [('hsc_equivalent_gpa',0,5),('age_at_enrollment',15,100),('semester_gpa_native',0,5),('last_semester_attendance_percent',0,100)]:
+        try:
+            value=float(values[field])
+            if value<low or value>high: issues.append(f'{BD_FIELD_TITLES[field]} must be between {low:g} and {high:g}.')
+        except (TypeError,ValueError): issues.append(f'{BD_FIELD_TITLES[field]} must be numeric.')
+    for field in ('courses_enrolled','evaluations_completed','courses_passed'):
+        try:
+            if int(values[field])!=float(values[field]) or float(values[field])<0: issues.append(f'{BD_FIELD_TITLES[field]} must be a non-negative whole number.')
+        except (TypeError,ValueError): issues.append(f'{BD_FIELD_TITLES[field]} must be numeric.')
+    for field,choices in BD_CATEGORICAL_CHOICES.items():
+        if field in values and str(values[field]) not in choices: issues.append(f'{BD_FIELD_TITLES[field]} has an unsupported value.')
+    return issues
 
 def dropout_probability(artifact:dict[str,Any],values:dict[str,Any])->float:
     pipeline=artifact['pipeline']; index=list(pipeline.classes_).index(1)
-    if artifact.get('raw_input_features')!=FORM_FIELDS:
-        raise ValueError('The saved model does not support this 15-field assessment. Retrain it first.')
+    if artifact.get('raw_input_features')!=FORM_FIELDS or artifact.get('target_is_predictor') is not False:
+        raise ValueError('The saved model does not support the exact combined 18-input schema.')
     return float(pipeline.predict_proba(make_input_frame(values))[0,index])
 
 def risk_label(probability:float,threshold:float|None=None)->str:
@@ -73,7 +116,7 @@ def risk_label(probability:float,threshold:float|None=None)->str:
 
 def support_guidance(*,semester_gpa:float,enrolled:int,evaluations:int,passed:int,debtor:bool,tuition_up_to_date:bool,scholarship:bool,previous_gpa:float)->tuple[list[str],list[str]]:
     pass_rate=passed/enrolled if enrolled else 0.0; evaluation_rate=evaluations/enrolled if enrolled else 0.0; candidates=[]
-    if semester_gpa<2.0: candidates.append((10,f'Low recent academic performance — Semester GPA: {semester_gpa:.2f} / 4.00',['Academic advising','Tutoring / study support']))
+    if semester_gpa<2.0: candidates.append((10,f'Low recent academic performance — Semester GPA: {semester_gpa:.2f} on the reported scale',['Academic advising','Tutoring / study support']))
     if not enrolled: candidates.append((9,'No course enrollment was reported',['Study-plan review']))
     elif pass_rate<0.5: candidates.append((9,f'Low course completion — {passed} of {enrolled} courses passed',['Course-specific academic support','Study-plan review']))
     elif pass_rate<0.7: candidates.append((5,f'Moderate course completion — {passed} of {enrolled} courses passed',['Study-plan review']))
@@ -106,49 +149,57 @@ def occupation_code(value:Any)->int:
     return code
 
 def prepare_student(record:dict[str,Any])->dict[str,Any]:
-    return {'previous_academic_gpa_normalized':float(record['HSC / Equivalent GPA']),'Age at enrollment':int(record['Age at Enrollment']),"Mother's occupation":occupation_code(record["Mother's Occupation"]),"Father's occupation":occupation_code(record["Father's Occupation"]),"Mother's qualification":education_code(record["Mother's Education"]),"Father's qualification":education_code(record["Father's Education"]),'Gender':gender_code(record['Gender']),'Marital status':marital_code(record['Marital Status']),'Scholarship holder':int(parse_boolean(record['Scholarship Holder'])),'Debtor':int(parse_boolean(record['Debtor'])),'Tuition fees up to date':int(parse_boolean(record['Tuition Fees Up to Date'])),'Curricular units 1st sem (enrolled)':int(record['Courses Enrolled']),'Curricular units 1st sem (evaluations)':int(record['Evaluations Completed']),'Curricular units 1st sem (approved)':int(record['Courses Passed']),'Curricular units 1st sem (grade)':semester_gpa_to_source_grade(float(record['Semester GPA']))}
+    """Map visible batch/form titles to the same 18 Bangladesh model fields."""
+    if set(USER_FIELDS).issubset(record):
+        values={USER_FIELD_TO_KEY[title]:record[title] for title in USER_FIELDS}
+    elif set(FORM_FIELDS).issubset(record):
+        values={field:record[field] for field in FORM_FIELDS}
+    else:
+        missing=[title for title in USER_FIELDS if title not in record]
+        raise ValueError('Missing 18-input assessment fields: '+', '.join(missing))
+    for field in ('hsc_equivalent_gpa','age_at_enrollment','semester_gpa_native','last_semester_attendance_percent','courses_enrolled','evaluations_completed','courses_passed'):
+        if pd.isna(values[field]) or str(values[field]).strip()=='': values[field]=float('nan')
+        elif field in {'age_at_enrollment','courses_enrolled','evaluations_completed','courses_passed'}: values[field]=int(float(values[field]))
+        else: values[field]=float(values[field])
+    return values
 
 def predict_student(artifact:dict[str,Any],record:dict[str,Any])->dict[str,Any]:
     values=prepare_student(record); probability=dropout_probability(artifact,values); label=risk_label(probability,artifact['threshold'])
-    indicators,supports=support_guidance(semester_gpa=float(record['Semester GPA']),enrolled=int(record['Courses Enrolled']),evaluations=int(record['Evaluations Completed']),passed=int(record['Courses Passed']),debtor=bool(values['Debtor']),tuition_up_to_date=bool(values['Tuition fees up to date']),scholarship=bool(values['Scholarship holder']),previous_gpa=float(record['HSC / Equivalent GPA']))
-    return {'probability':probability,'risk_level':label,'threshold':artifact['threshold'],'indicators':indicators,'supports':supports}
+    local_signal,uci_signal=artifact['pipeline'].component_probabilities(make_input_frame(values))
+    indicators,supports=support_guidance(semester_gpa=float(values['semester_gpa_native']),enrolled=int(values['courses_enrolled']),evaluations=int(values['evaluations_completed']),passed=int(values['courses_passed']),debtor=str(values['debtor'])=='Yes',tuition_up_to_date=str(values['tuition_fees_up_to_date'])=='Yes',scholarship=str(values['scholarship_holder'])=='Yes',previous_gpa=float(values['hsc_equivalent_gpa']))
+    attendance=values['last_semester_attendance_percent']
+    if attendance<75: indicators.append(f'Low reported last-semester attendance — {attendance:.1f}%'); supports.insert(0,'Attendance follow-up and student check-in')
+    if str(values['family_financial_condition']).startswith(('Poor','Below Average')): indicators.append('Reported household income is in a lower provisional survey bracket'); supports.append('Financial-aid review')
+    if str(values['student_employment']) in {'Full-time','Part-time'}: indicators.append(f'Student reported {values["student_employment"].lower()} employment'); supports.append('Review study/work schedule and flexibility')
+    return {'probability':probability,'risk_level':label,'threshold':artifact['threshold'],'component_scores':{'uci_academic':float(uci_signal[0]),'bangladesh_local':float(local_signal[0])},'indicators':indicators[:3],'supports':list(dict.fromkeys(supports))[:4]}
 
 def validate_batch_dataframe(frame:pd.DataFrame)->pd.DataFrame:
     missing=[column for column in USER_FIELDS if column not in frame.columns]
     if missing: return pd.DataFrame([{'Row':'File','Issue':'Missing required columns: '+', '.join(missing)}])
     issues=[]
+    ranges={'HSC / Equivalent GPA':(0,5,False),'Age at enrollment':(15,100,True),'Courses enrolled in the relevant semester':(0,500,True),'Evaluations completed in the relevant semester':(0,1000,True),'Courses passed in the relevant semester':(0,500,True),'Semester GPA (native university scale)':(0,5,False),'Last-semester attendance percentage':(0,100,False)}
     for position,(_,row) in enumerate(frame.iterrows(),start=2):
+        canonical={USER_FIELD_TO_KEY[col]:row[col] for col in USER_FIELDS}
         def issue(message:str): issues.append({'Row':position,'Issue':message})
+        for title,(minimum,maximum,integer) in ranges.items():
+            value=row[title]
+            if pd.isna(value) or str(value).strip()=='': continue
+            try: number=float(value)
+            except (TypeError,ValueError): issue(f'{title} must be numeric.'); continue
+            if number<minimum or number>maximum or (integer and not number.is_integer()):
+                kind='whole number' if integer else 'number'
+                issue(f'{title} must be a {kind} in range {minimum:g}–{maximum:g}.')
+        for field,choices in BD_CATEGORICAL_CHOICES.items():
+            if field not in FORM_FIELDS: continue
+            title=BD_FIELD_TITLES[field]; value=row[title]
+            if pd.isna(value) or str(value).strip()=='': continue
+            normalized=str(value).strip()
+            if field=='marital_status_bangladesh' and normalized=='Single': normalized='Single / Never married'
+            if normalized not in choices: issue(f'{title} has an unsupported value.')
         try:
-            hsc=float(row['HSC / Equivalent GPA'])
-            if not 2.5<=hsc<=5.0: issue('HSC / Equivalent GPA must be between 2.50 and 5.00.')
-        except (TypeError,ValueError): issue('HSC / Equivalent GPA must be numeric.')
-        try:
-            gpa=float(row['Semester GPA'])
-            if not 0<=gpa<=4: issue('Semester GPA must be between 0.00 and 4.00.')
-        except (TypeError,ValueError): issue('Semester GPA must be numeric.')
-        for column,minimum,maximum in [('Age at Enrollment',17,70),('Courses Enrolled',0,26),('Evaluations Completed',0,None),('Courses Passed',0,26)]:
-            try:
-                value=float(row[column])
-                if value<minimum or (maximum is not None and value>maximum) or not value.is_integer(): issue(f'{column} must be a whole number in the supported range.')
-            except (TypeError,ValueError): issue(f'{column} must be numeric.')
-        try:
-            if float(row['Courses Passed'])>float(row['Courses Enrolled']): issue('Courses Passed cannot be greater than Courses Enrolled.')
+            passed=canonical['courses_passed']; enrolled=canonical['courses_enrolled']
+            if not pd.isna(passed) and not pd.isna(enrolled) and float(passed)>float(enrolled): issue('Courses passed cannot be greater than courses enrolled.')
         except (TypeError,ValueError): pass
-        for column in ['Scholarship Holder','Debtor','Tuition Fees Up to Date']:
-            try: parse_boolean(row[column])
-            except ValueError as error: issue(f'{column} {error}.')
-        for column in ["Mother's Occupation","Father's Occupation"]:
-            try: occupation_code(row[column])
-            except ValueError as error: issue(f'{column} {error}.')
-    for position,(_,row) in enumerate(frame.iterrows(),start=2):
-        for column in ["Mother's Education","Father's Education"]:
-            try: education_code(row[column])
-            except ValueError as error: issues.append({'Row':position,'Issue':f'{column} {error}.'})
-        try: marital_code(row['Marital Status'])
-        except ValueError as error: issues.append({'Row':position,'Issue':f'Marital Status {error}.'})
-        try: gender_code(row['Gender'])
-        except ValueError as error: issues.append({'Row':position,'Issue':f'Gender {error}.'})
     return pd.DataFrame(issues,columns=['Row','Issue'])
 
 def indicator_group(indicator:str)->str:
@@ -163,7 +214,7 @@ def analyze_batch(artifact:dict[str,Any],frame:pd.DataFrame)->pd.DataFrame:
     rows=[]
     for position,(_,source) in enumerate(frame.iterrows(),start=1):
         record=source.to_dict(); result=predict_student(artifact,record); indicators=result['indicators'] if result['risk_level'].startswith('Elevated') else []
-        rows.append({**record,ID_COLUMN:metadata_text(record.get(ID_COLUMN),f'Student {position}'),SEMESTER_COLUMN:metadata_text(record.get(SEMESTER_COLUMN)), 'Estimated Dropout Risk':result['probability'],'Risk Level':result['risk_level'],'Main Indicator':indicators[0] if indicators else '-','Key Risk Indicators':' | '.join(indicators) if indicators else '-','Suggested Institute Support':' | '.join(result['supports']) if indicators else '-','Warning Type':indicator_group(indicators[0]) if indicators else '-'})
+        rows.append({**record,ID_COLUMN:metadata_text(record.get(ID_COLUMN),f'Student {position}'),SEMESTER_COLUMN:metadata_text(record.get(SEMESTER_COLUMN)), 'Estimated Current Dropout-Status Probability':result['probability'],'UCI Academic Foundation Signal (research estimate)':result['component_scores']['uci_academic'],'Bangladesh Local Model Signal (research estimate)':result['component_scores']['bangladesh_local'],'Risk Level':result['risk_level'],'Main Indicator':indicators[0] if indicators else '-','Key Risk Indicators':' | '.join(indicators) if indicators else '-','Suggested Institute Support':' | '.join(result['supports']) if indicators else '-','Warning Type':indicator_group(indicators[0]) if indicators else '-'})
     return pd.DataFrame(rows)
 
 def export_results(frame:pd.DataFrame)->bytes:
@@ -171,7 +222,16 @@ def export_results(frame:pd.DataFrame)->bytes:
     return frame[[column for column in columns if column in frame.columns]].to_csv(index=False).encode('utf-8')
 
 def template_frame()->pd.DataFrame:
-    example={ID_COLUMN:'EXAMPLE-001',SEMESTER_COLUMN:'3rd Semester','HSC / Equivalent GPA':4.20,'Age at Enrollment':19,"Mother's Occupation":'Administrative staff',"Father's Occupation":'Unskilled workers','Scholarship Holder':'No','Debtor':'No','Tuition Fees Up to Date':'Yes','Courses Enrolled':6,'Evaluations Completed':6,'Courses Passed':5,'Semester GPA':3.25,"Mother's Education":'Secondary education (12th year)',"Father's Education":'Secondary education (12th year)','Gender':'Female','Marital Status':'Single'}
+    example={ID_COLUMN:'EXAMPLE-001',SEMESTER_COLUMN:'Relevant semester'}
+    for field in FORM_FIELDS:
+        title=BD_FIELD_TITLES[field]
+        choices=BD_CATEGORICAL_CHOICES.get(field)
+        if choices: example[title]=choices[0]
+        elif field=='hsc_equivalent_gpa': example[title]=4.20
+        elif field=='age_at_enrollment': example[title]=19
+        elif field in {'courses_enrolled','evaluations_completed','courses_passed'}: example[title]=5
+        elif field=='semester_gpa_native': example[title]=3.25
+        elif field=='last_semester_attendance_percent': example[title]=85.0
     return pd.DataFrame([example],columns=BATCH_COLUMNS)
 
 def template_csv()->bytes:
@@ -194,6 +254,10 @@ def dataframe_to_excel(frame:pd.DataFrame,sheet_name:str)->bytes:
         frame.to_excel(writer,index=False,sheet_name=sheet_name)
     return buffer.getvalue()
 
+def bangladesh_research_excel(frame:pd.DataFrame)->bytes:
+    """Export only the 18 Bangladesh questionnaire predictors."""
+    return dataframe_to_excel(frame,'Bangladesh Survey v2')
+
 def template_excel()->bytes:
     return dataframe_to_excel(template_frame(),'Student Template')
 
@@ -211,9 +275,12 @@ def read_uploaded_table(uploaded:Any)->pd.DataFrame:
 
 def navigate(page:str)->None: st.session_state['page']=page
 
-def dashboard()->None:
-    st.markdown('''<div class="hero"><div class="hero-kicker">ACADEMIC INTELLIGENCE · EARLY WARNING</div><h1>Student Dropout Early Warning System</h1><h2>AI-powered student support dashboard for early academic intervention</h2><p>Identify potentially at-risk students and coordinate earlier support using academic, financial, and background information.</p></div>''',unsafe_allow_html=True)
-    metric_cards([('Random Forest','ML Model','◈'),('15','Student Factors','◆'),('94.1%','Holdout ROC-AUC','◉'),('85.9%','Holdout Recall','↗')])
+def dashboard(artifact:dict[str,Any])->None:
+    metrics=artifact.get('active_model_metrics',{})
+    roc=f'{metrics["roc_auc"]:.1%}' if 'roc_auc' in metrics else '—'
+    recall=f'{metrics["recall"]:.1%}' if 'recall' in metrics else '—'
+    st.markdown('''<div class="hero"><div class="hero-kicker">UCI + BANGLADESH UNIVERSITY · RESEARCH PROTOTYPE</div><h1>Student Dropout Early Warning System</h1><h2>Combined academic foundation and Bangladesh student-support signals</h2><p>Combines an academic signal learned from resolved Portuguese UCI records with all 18 Bangladesh questionnaire inputs. It classifies reported current status, not validated future dropout.</p></div>''',unsafe_allow_html=True)
+    metric_cards([(artifact.get('selected_model','—'),'Selected ML Model','◈'),('18','Student Factors','◆'),(roc,'Internal ROC-AUC','◉'),(recall,'Internal Recall','↗')])
     st.markdown('<div class="process-strip"><span>Student Data</span><b>→</b><span>Risk Analysis</span><b>→</b><span>Warning Indicators</span><b>→</b><span>Support Action</span></div>',unsafe_allow_html=True)
     c1,c2=st.columns(2,gap='large')
     c1.markdown('<div class="action-copy"><b>Individual screening</b><span>Review one student with an immediate support summary.</span></div>',unsafe_allow_html=True)
@@ -223,7 +290,13 @@ def dashboard()->None:
 
 def render_result(result:dict[str,Any],student_id:str='Individual Assessment')->None:
     elevated=result['risk_level'].startswith('Elevated'); status='elevated' if elevated else 'lower'; width=max(2,min(100,result['probability']*100))
-    st.markdown(f'''<div class="result-panel {status}"><div class="result-top"><div><span class="result-label">ESTIMATED DROPOUT RISK</span><strong>{result["probability"]:.1%}</strong></div><div class="status-badge">{result["risk_level"]}</div></div><div class="risk-track"><div style="width:{width:.1f}%"></div></div><div class="scale"><span>Lower risk</span><span>Threshold {result["threshold"]:.0%}</span><span>Higher risk</span></div></div>''',unsafe_allow_html=True)
+    st.markdown(f'''<div class="result-panel {status}"><div class="result-top"><div><span class="result-label">ESTIMATED REPORTED CURRENT DROPOUT-STATUS PROBABILITY</span><strong>{result["probability"]:.1%}</strong></div><div class="status-badge">{result["risk_level"]}</div></div><div class="risk-track"><div style="width:{width:.1f}%"></div></div><div class="scale"><span>Lower estimate</span><span>Threshold {result["threshold"]:.0%}</span><span>Higher estimate</span></div></div>''',unsafe_allow_html=True)
+    components=result.get('component_scores')
+    if components:
+        st.caption('Component research signals (not independently validated future-dropout probabilities). The ensemble result above is the single assessment output.')
+        left,right=st.columns(2,gap='medium')
+        left.metric('UCI academic foundation signal',f'{components["uci_academic"]:.1%}')
+        right.metric('Bangladesh local model signal',f'{components["bangladesh_local"]:.1%}')
     if elevated:
         section_heading('Key Risk Indicators','INTERPRETATION')
         st.caption('These indicators are based on the entered information and are not confirmed causes of dropout.')
@@ -234,24 +307,42 @@ def render_result(result:dict[str,Any],student_id:str='Individual Assessment')->
         st.markdown('<div class="support-grid">'+''.join(f'<div class="support-card"><i>→</i><span>{item}</span></div>' for item in supports)+'</div>',unsafe_allow_html=True)
     else:
         st.markdown('<div class="lower-note">✓ No major immediate warning indicators were identified. Continue normal academic monitoring.</div>',unsafe_allow_html=True)
-    report='\n'.join([f'Student: {student_id}',f'Estimated Dropout Risk: {result["probability"]:.1%}',f'Risk Level: {result["risk_level"]}','Key Risk Indicators: '+('; '.join(result['indicators']) or 'None'),'Suggested Institute Support: '+('; '.join(result['supports']) or 'Normal academic monitoring')])
+    report='\n'.join([f'Student: {student_id}','Estimated reported current dropout-status probability: '+f'{result["probability"]:.1%}',f'Risk Level: {result["risk_level"]}','This retrospective current-status classification is not a prediction of future dropout.','Key Risk Indicators: '+('; '.join(result['indicators']) or 'None'),'Suggested Institute Support: '+('; '.join(result['supports']) or 'Normal academic monitoring')])
     st.download_button('↓ Download Assessment',report,file_name='student_assessment.txt',mime='text/plain')
 
 def individual_assessment(artifact:dict[str,Any])->None:
-    st.markdown('<div class="page-header"><span>INDIVIDUAL SCREENING</span><h1>Individual Assessment</h1><p>Use information from the student’s most recently completed semester.</p></div>',unsafe_allow_html=True)
+    st.markdown('<div class="page-header"><span>INDIVIDUAL SCREENING</span><h1>Individual Assessment</h1><p>Estimate reported current dropout status from the 18 Bangladesh questionnaire predictors. Not future-outcome validation.</p></div>',unsafe_allow_html=True)
     with st.form('assessment_form'):
         student_id=st.text_input('Anonymous Student ID (optional)',placeholder='e.g. STUDENT-001')
-        section_heading('Student Background','01'); c1,c2=st.columns(2); previous=c1.number_input('HSC / Equivalent GPA',2.50,5.00,3.50,step=0.01); age=c2.number_input('Age at Enrollment',17,70,19)
-        section_heading('Family Background','02'); c1,c2=st.columns(2); labels=list(OCCUPATION_BY_LABEL); mother=c1.selectbox("Mother’s Occupation",labels,index=labels.index('Unskilled workers')); father=c2.selectbox("Father’s Occupation",labels,index=labels.index('Unskilled workers'))
-        c1,c2=st.columns(2); education_labels=list(EDUCATION_BY_LABEL); mother_education=c1.selectbox("Mother’s Education",education_labels); father_education=c2.selectbox("Father’s Education",education_labels)
-        gender=st.selectbox('Gender',list(GENDERS)); marital=st.selectbox('Marital Status',[status for status in MARITAL_STATUSES if status!='De facto union'])
-        section_heading('Financial Status','03'); c1,c2,c3=st.columns(3); scholarship=c1.selectbox('Scholarship Holder',['No','Yes']); debtor=c2.selectbox('Debtor',['No','Yes']); tuition=c3.selectbox('Tuition Fees Up to Date',['No','Yes'])
-        section_heading('Recent Semester Performance','04'); c1,c2,c3,c4=st.columns(4); enrolled=c1.number_input('Courses Enrolled',0,26,6); evaluations=c2.number_input('Evaluations Completed',0,45,8); passed=c3.number_input('Courses Passed',0,26,5); semester_gpa=c4.number_input('Semester GPA',0.00,4.00,3.00,step=0.01)
+        answers={}
+        section_heading('Student Background','01')
+        for field in ('hsc_equivalent_gpa','age_at_enrollment','gender_bangladesh','marital_status_bangladesh'):
+            choices=BD_CATEGORICAL_CHOICES.get(field)
+            if choices:
+                default='Unknown / Prefer not to say' if 'Unknown / Prefer not to say' in choices else choices[0]
+                answers[field]=st.selectbox(BD_FIELD_TITLES[field],choices,index=choices.index(default),key='individual_'+field)
+            elif field=='hsc_equivalent_gpa': answers[field]=st.number_input(BD_FIELD_TITLES[field],0.0,5.0,3.5,step=0.01)
+            else: answers[field]=st.number_input(BD_FIELD_TITLES[field],15,100,19)
+        section_heading('Family Background','02')
+        for field in ('mother_occupation_bangladesh','father_occupation_bangladesh','mother_education_bangladesh','father_education_bangladesh'):
+            choices=BD_CATEGORICAL_CHOICES[field]; default='Unknown / Prefer not to say'
+            answers[field]=st.selectbox(BD_FIELD_TITLES[field],choices,index=choices.index(default),key='individual_'+field)
+        section_heading('Financial Status','03')
+        for field in ('scholarship_holder','debtor','tuition_fees_up_to_date','family_financial_condition','student_employment'):
+            choices=BD_CATEGORICAL_CHOICES[field]
+            default='Unknown / Prefer not to say' if 'Unknown / Prefer not to say' in choices else 'Undisclosed'
+            answers[field]=st.selectbox(BD_FIELD_TITLES[field],choices,index=choices.index(default),key='individual_'+field)
+        section_heading('Recent Semester Performance','04')
+        for field in ('courses_enrolled','evaluations_completed','courses_passed','semester_gpa_native','last_semester_attendance_percent'):
+            title=BD_FIELD_TITLES[field]
+            if field in {'courses_enrolled','evaluations_completed','courses_passed'}: answers[field]=st.number_input(title,0,1000,5 if field!='evaluations_completed' else 5,key='individual_'+field)
+            elif field=='semester_gpa_native': answers[field]=st.number_input(title,0.0,5.0,3.0,step=0.01,key='individual_'+field)
+            else: answers[field]=st.number_input(title,0.0,100.0,80.0,step=0.1,key='individual_'+field)
         submitted=st.form_submit_button('Run Risk Assessment',type='primary',use_container_width=True)
     if submitted:
-        record={'HSC / Equivalent GPA':previous,'Age at Enrollment':age,"Mother's Occupation":mother,"Father's Occupation":father,"Mother's Education":mother_education,"Father's Education":father_education,'Gender':gender,'Marital Status':marital,'Scholarship Holder':scholarship,'Debtor':debtor,'Tuition Fees Up to Date':tuition,'Courses Enrolled':enrolled,'Evaluations Completed':evaluations,'Courses Passed':passed,'Semester GPA':semester_gpa}
-        if passed>enrolled: st.error('Courses Passed cannot be greater than Courses Enrolled.'); return
-        render_result(predict_student(artifact,record),student_id.strip() or 'Individual Assessment')
+        errors=validate_inputs(answers)
+        if errors: st.error(' '.join(errors)); return
+        render_result(predict_student(artifact,answers),student_id.strip() or 'Individual Assessment')
 
 def dark_bar(data:pd.DataFrame,color:str='#35d6ff')->None:
     chart_data=data.reset_index(); category,value=chart_data.columns[:2]
@@ -259,7 +350,7 @@ def dark_bar(data:pd.DataFrame,color:str='#35d6ff')->None:
     st.vega_lite_chart(chart_data,spec,use_container_width=True)
 
 def batch_analysis(artifact:dict[str,Any])->None:
-    st.markdown('<div class="page-header"><span>COHORT INTELLIGENCE</span><h1>Batch Analysis</h1><p>Analyze a CSV or Excel cohort using the same validated model and support rules.</p></div>',unsafe_allow_html=True)
+    st.markdown('<div class="page-header"><span>COHORT INTELLIGENCE</span><h1>Batch Analysis</h1><p>Analyze a CSV or Excel cohort using the same combined model and support rules. Component scores are shown for transparency, not as separately validated outcomes.</p></div>',unsafe_allow_html=True)
     st.markdown('<div class="privacy-note"><b>Privacy first.</b> Use anonymous student IDs. Do not upload names, phone numbers, email addresses, or unnecessary personal information. Files are processed in memory only.</div>',unsafe_allow_html=True)
     c1,c2=st.columns([1,2]); c1.download_button('↓ Download CSV Template',template_csv(),'student_batch_template.csv','text/csv',use_container_width=True)
     with c2:
@@ -275,7 +366,8 @@ def batch_analysis(artifact:dict[str,Any])->None:
     if not errors.empty:
         st.error('The file contains validation problems. No rows were analyzed.'); st.dataframe(errors,use_container_width=True,hide_index=True); return
     results=analyze_batch(artifact,frame); elevated=results['Risk Level'].str.startswith('Elevated')
-    metric_cards([(str(len(results)),'Total Students','◎'),(str(int(elevated.sum())),'Elevated Risk','▲'),(str(int((~elevated).sum())),'Lower Risk','✓'),(f'{results["Estimated Dropout Risk"].mean():.1%}','Average Estimated Risk','◉')])
+    probability_column='Estimated Current Dropout-Status Probability'
+    metric_cards([(str(len(results)),'Total Students','◎'),(str(int(elevated.sum())),'Elevated Estimate','▲'),(str(int((~elevated).sum())),'Lower Estimate','✓'),(f'{results[probability_column].mean():.1%}','Average Status Estimate','◉')])
     c1,c2=st.columns(2,gap='large')
     with c1:
         section_heading('Risk Distribution','COHORT OVERVIEW'); distribution=results['Risk Level'].value_counts().rename_axis('Risk Level').to_frame('Students'); dark_bar(distribution,'#7c6cff')
@@ -286,26 +378,88 @@ def batch_analysis(artifact:dict[str,Any])->None:
     if risk_filter!='All': filtered=filtered[filtered['Risk Level'].str.startswith(risk_filter)]
     if semester_filter!='All': filtered=filtered[filtered[SEMESTER_COLUMN].astype(str)==semester_filter]
     if search: filtered=filtered[filtered[ID_COLUMN].astype(str).str.contains(search,case=False,na=False)]
-    display=filtered[[ID_COLUMN,SEMESTER_COLUMN,'Estimated Dropout Risk','Risk Level','Main Indicator']].copy(); display['Estimated Dropout Risk']=display['Estimated Dropout Risk'].map(lambda x:f'{x:.1%}')
+    display=filtered[[ID_COLUMN,SEMESTER_COLUMN,probability_column,'Risk Level','Main Indicator']].copy(); display[probability_column]=display[probability_column].map(lambda x:f'{x:.1%}')
     styled=display.style.apply(lambda row:['background-color: rgba(255,110,92,.10)' if str(row['Risk Level']).startswith('Elevated') else '' for _ in row],axis=1)
     st.dataframe(styled,use_container_width=True,hide_index=True)
     d1,d2=st.columns(2,gap='large')
     d1.download_button('↓ Download Analysis Results CSV',export_results(results),'student_batch_analysis.csv','text/csv',use_container_width=True)
     d2.download_button('↓ Download Analysis Results Excel',export_results_excel(results),'student_batch_analysis.xlsx','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',use_container_width=True)
 
-def about()->None:
+def about(artifact:dict[str,Any])->None:
     st.markdown('<div class="page-header"><span>PROJECT OVERVIEW</span><h1>About Project</h1><p>A transparent academic prototype connecting risk estimation with practical student support.</p></div>',unsafe_allow_html=True)
-    st.markdown('<div class="architecture"><span>Student Inputs</span><b>→</b><span>Random Forest</span><b>→</b><span>Risk Estimate</span><b>→</b><span>Support Guidance</span></div>',unsafe_allow_html=True)
+    st.markdown('<div class="architecture"><span>UCI Academic Foundation</span><b>+</b><span>18 Bangladesh Inputs</span><b>→</b><span>Calibrated Combined Estimate</span><b>→</b><span>Support Guidance</span></div>',unsafe_allow_html=True)
+    metrics=artifact.get('active_model_metrics',{})
+    performance='Nested stratified cross-validation on Bangladesh reported-status labels; not a fresh holdout or external validation. '
+    if metrics:
+        cm=metrics['confusion_matrix']
+        performance+=f"Accuracy {metrics['accuracy']:.1%}, balanced accuracy {metrics['balanced_accuracy']:.1%}, precision {metrics['precision']:.1%}, recall {metrics['recall']:.1%}, F1 {metrics['f1']:.1%}, ROC-AUC {metrics['roc_auc']:.3f}, PR-AUC {metrics['pr_auc_average_precision']:.3f}, Brier {metrics['brier_score']:.3f} (prevalence baseline {metrics['constant_training_prevalence_brier']:.3f}); TN/FP/FN/TP {cm['tn']}/{cm['fp']}/{cm['fn']}/{cm['tp']}. "
+    performance+='Small local sample, different UCI/Bangladesh outcome definitions, and uncertain predictor timing limit interpretation; not future-dropout prediction.'
     c1,c2=st.columns(2,gap='large')
     with c1:
-        info_card('Purpose','Identify students who may benefit from timely academic or financial follow-up.')
-        info_card('Dataset','UCI Predict Students’ Dropout and Academic Success · 4,424 original records · 3,630 resolved outcomes.')
-        info_card('Model','Random Forest · 15 student inputs · end-of-Semester-1 prediction · threshold 0.52 selected from training-only OOF predictions.')
+        info_card('Purpose','Demonstrate classification of reported current dropout status and connect it with human-reviewed support guidance.')
+        info_card('Dataset','Bangladesh University Research Responses.xlsx · 251 local questionnaire responses. Current status is reported at survey time.')
+        info_card('Model',f"Expanded UCI academic foundation + Bangladesh 18-input model · calibrated {artifact.get('blend_weight_uci',0):.0%}/{artifact.get('blend_weight_bangladesh',0):.0%} probability blend · threshold {artifact.get('threshold',0.5):.3f} selected from training-only OOF predictions.")
     with c2:
-        info_card('Performance','Previously consulted holdout: accuracy 87.9%, precision 83.6%, recall 85.9%, F1 84.7%, ROC-AUC 94.1%, PR-AUC 93.1%. Confusion matrix: TN 394 · FP 48 · FN 40 · TP 244.')
+        info_card('Performance',performance)
         info_card('How Risk Indicators Work','A separate deterministic layer summarizes relevant academic and financial warnings. They are not causal explanations.')
         info_card('Local Data Collection','Anonymous campus records can support local pattern analysis, later validation, and future retraining once outcomes are linked.')
-    info_card('Limitations','Training data originate from Portuguese higher education and are not externally validated in Bangladesh. Source academic variables describe first-semester performance. Local longitudinal outcomes are required before retraining. Predictions support—not replace—human judgement.')
+    info_card('Limitations','Small convenience sample; self-reported contemporaneous status; predictor timing relative to discontinuation is not established. Running is coded 0 as required, not proof of eventual graduation. Metrics are uncertain and do not demonstrate future prediction. Outputs support—not replace—human judgement.')
+
+def bangladesh_data_collection()->None:
+    st.markdown('<div class="page-header"><span>LOCAL RESEARCH DATA</span><h1>Bangladesh Data Collection</h1><p>Review and validate a Bangladesh-specific survey export with 18 predictors and one separate status label. This page does not calculate model risk scores.</p></div>',unsafe_allow_html=True)
+    st.markdown('<div class="privacy-note"><b>Separate response-import workflow.</b> Imported survey files are validated and exported locally; they are not silently appended to training or sent into a prediction. For the trained Bangladesh classifier, Current Academic Status is used as the target only and never as an input. The questionnaire contains no identity, consent, university, date, or other metadata questions. Obtain and document any required consent separately before collecting or using responses.</div>',unsafe_allow_html=True)
+    c1,c2=st.columns(2,gap='large')
+    with c1:
+        info_card('Questionnaire schema','Version 3 contains exactly 18 predictor questions followed by one required Current Academic Status dropdown. It collects no consent, student ID, university name, dates, or other research metadata. The status field is excluded from every input feature set.')
+        info_card('Parent occupations','Both parent questions use Bangladesh survey categories: '+', '.join(BD_PARENT_OCCUPATIONS)+'. These local categories remain text values and are not mapped to Portuguese UCI occupation codes.')
+    with c2:
+        info_card('Local fields','Attendance is 0–100% or blank. Household-income brackets are provisional survey categories, not official poverty definitions. Employment options describe student work. GPA fields are recorded without cross-country conversion.')
+        info_card('Status label','Dropout (Discontinued Studies) maps to 1. Passed (Graduated) and Running (Currently Studying) map to 0, as specified. Running is only the status reported at submission and is not evidence of future completion or non-dropout.')
+
+    with st.expander('Review the 18 predictor fields and response categories',expanded=False):
+        rows=[]
+        for field in BD_PREDICTOR_FIELDS:
+            options=BD_CATEGORICAL_CHOICES.get(field,())
+            rows.append({'Predictor':BD_FIELD_TITLES[field],'Type':'Categorical' if options else 'Numeric','Allowed values / notes':', '.join(options) if options else 'See versioned data dictionary; blank means unknown/not reported.'})
+        rows.append({'Predictor':BD_STATUS_TITLE,'Type':'Target (not a feature)','Allowed values / notes':', '.join(BD_ACADEMIC_STATUS_OPTIONS)})
+        st.dataframe(pd.DataFrame(rows),use_container_width=True,hide_index=True)
+
+    template=questionnaire_template_frame()
+    st.download_button('↓ Download Bangladesh survey CSV template',template.to_csv(index=False).encode('utf-8'),'bangladesh_university_survey_v3.csv','text/csv',use_container_width=True)
+    st.caption('Run updateExistingBangladeshResearchForm() in your Google Apps Script project to update the existing form. It stops without changing anything if any responses already exist. It does not create, publish, or distribute a form.')
+
+    section_heading('Import Google Forms responses','LOCAL VALIDATION ONLY')
+    uploaded=st.file_uploader('Upload a Google Forms CSV or Excel (.xlsx) export',type=['csv','xlsx'],key='bangladesh_forms_upload')
+    if uploaded is None:
+        st.caption('CSV and Excel files are processed in memory. The clean export contains 18 predictor columns and the separate required academic-status label. Missing optional predictors remain blank; no imputation or model inference is performed.')
+        return
+    try:
+        source=read_uploaded_table(uploaded)
+        cleaned=clean_google_forms_responses(source)
+        issues=validate_bangladesh_responses(source)
+    except Exception as error:
+        st.error(f'Could not validate the research export: {error}')
+        return
+    errors=issues.loc[issues['Severity'].eq('error')] if not issues.empty else issues
+    warnings=issues.loc[issues['Severity'].eq('warning')] if not issues.empty else issues
+    if not issues.empty:
+        st.dataframe(issues,use_container_width=True,hide_index=True)
+    if not errors.empty:
+        st.error('Resolve the value errors before exporting this response file.')
+        return
+    c1,c2,c3=st.columns(3)
+    c1.metric('Rows received',len(cleaned)); c2.metric('Predictor fields',len(BD_PREDICTOR_FIELDS)); c3.metric('Target labels',len(cleaned[BD_STATUS_FIELD]))
+    if not warnings.empty:
+        st.info('Warnings identify question columns absent from the uploaded export. Those fields are preserved as blank columns.')
+    st.dataframe(cleaned,use_container_width=True,hide_index=True)
+    csv_bytes=cleaned.to_csv(index=False).encode('utf-8')
+    excel_bytes=bangladesh_research_excel(cleaned)
+    d1,d2=st.columns(2)
+    labels=academic_status_target(cleaned)
+    st.caption('Target coding preview: Dropout = 1; Passed and Running = 0. Running is an observed current status, not confirmation of a future outcome.')
+    st.dataframe(pd.DataFrame({'Current Academic Status':cleaned[BD_STATUS_FIELD],'dropout_target':labels}),use_container_width=True,hide_index=True)
+    d1.download_button('↓ Download clean research CSV',csv_bytes,'bangladesh_university_responses_v3.csv','text/csv',use_container_width=True)
+    d2.download_button('↓ Download clean research Excel',excel_bytes,'bangladesh_university_responses_v3.xlsx','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',use_container_width=True)
 
 def style()->None:
     st.markdown('''<style>
@@ -321,9 +475,10 @@ def style()->None:
 
 def main()->None:
     st.set_page_config(page_title='Student Dropout Early Warning System',page_icon='🎓',layout='wide',initial_sidebar_state='expanded'); style(); artifact=load_model_artifact()
-    pages=['Dashboard','Individual Assessment','Batch Analysis','About Project']; st.sidebar.markdown('### ◈ Early Warning'); st.sidebar.caption('STUDENT SUCCESS INTELLIGENCE'); page=st.sidebar.radio('Navigate',pages,key='page',label_visibility='collapsed'); st.sidebar.markdown('---'); st.sidebar.caption('Local academic prototype · 15-input Random Forest')
-    if page=='Dashboard': dashboard()
+    st.sidebar.markdown('### ◈ Early Warning'); st.sidebar.caption('STUDENT SUCCESS INTELLIGENCE'); page=st.sidebar.radio('Navigate',APP_PAGES,key='page',label_visibility='collapsed'); st.sidebar.markdown('---'); st.sidebar.caption('Bangladesh research prototype · 18 predictors')
+    if page=='Dashboard': dashboard(artifact)
     elif page=='Individual Assessment': individual_assessment(artifact)
     elif page=='Batch Analysis': batch_analysis(artifact)
-    else: about()
+    elif page=='About Project': about(artifact)
+    else: bangladesh_data_collection()
 if __name__=='__main__': main()

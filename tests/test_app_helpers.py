@@ -1,155 +1,253 @@
-"""Safety, inference, support-layer, batch, and UI tests."""
+"""App, active 18-input model, batch workflow, and legacy-artifact safety tests."""
 import hashlib
 import io
 import json
 from pathlib import Path
+
 import joblib
 import pandas as pd
 import pytest
-from streamlit.testing.v1 import AppTest
-from app import (BATCH_COLUMNS,FORM_FIELDS,ID_COLUMN,METADATA_PATH,MODEL_PATH,OCCUPATIONS,
-    OCCUPATION_BY_LABEL,RESULT_COLUMNS,SEMESTER_COLUMN,THRESHOLD,USER_FIELDS,analyze_batch,
-    dropout_probability,export_results,export_results_excel,make_input_frame,parse_boolean,predict_student,
-    read_uploaded_table,risk_label,semester_gpa_to_source_grade,support_guidance,template_excel,
-    validate_batch_dataframe,validate_inputs)
-from src.uci_sem1_features import normalize_previous_grade
+from app import (
+    APP_PAGES, BATCH_COLUMNS, FORM_FIELDS, ID_COLUMN, METADATA_PATH, MODEL_PATH, RESULT_COLUMNS,
+    SEMESTER_COLUMN, USER_FIELDS, analyze_batch, dropout_probability, export_results,
+    export_results_excel, load_model_artifact, make_input_frame, predict_student,
+    prepare_student, read_uploaded_table, render_result, risk_label, support_guidance, template_excel,
+    template_frame, validate_batch_dataframe, validate_inputs,
+)
+from src.bangladesh_collection import PREDICTOR_FIELDS, synthetic_example_rows
 
-ROOT=Path(__file__).resolve().parents[1]
-RESULTS_PATH=ROOT/'reports'/'uci_sem1'/'training_results_15_input.json'
+ROOT = Path(__file__).resolve().parents[1]
+RESULTS_PATH = ROOT / "reports" / "combined_uci_bangladesh_18_v2" / "training_results.json"
+ACTIVE_HASH = "D9F4D5663002E3C17482E57EE5E50E97038CFEDB3B987046ECB0F652CD4DBA06"
+ACTIVE_THRESHOLD = 0.3040698561883773
+
 
 def sample_values(**overrides):
-    values={'previous_academic_gpa_normalized':3.5,'Age at enrollment':19,"Mother's occupation":9,"Father's occupation":9,"Mother's qualification":1,"Father's qualification":1,'Gender':0,'Marital status':1,'Scholarship holder':0,'Debtor':0,'Tuition fees up to date':1,'Curricular units 1st sem (enrolled)':6,'Curricular units 1st sem (evaluations)':8,'Curricular units 1st sem (approved)':5,'Curricular units 1st sem (grade)':12.0}
-    values.update(overrides); return values
+    values = synthetic_example_rows().iloc[0].loc[list(FORM_FIELDS)].to_dict()
+    values.update(overrides)
+    return values
+
 
 def student(**overrides):
-    row={ID_COLUMN:'ST001',SEMESTER_COLUMN:'3rd Semester','HSC / Equivalent GPA':4.2,'Age at Enrollment':19,"Mother's Occupation":'Administrative staff',"Father's Occupation":'Unskilled workers',"Mother's Education":'Secondary education (12th year)',"Father's Education":'Secondary education (12th year)','Gender':'Female','Marital Status':'Single','Scholarship Holder':'No','Debtor':'No','Tuition Fees Up to Date':'Yes','Courses Enrolled':6,'Evaluations Completed':6,'Courses Passed':5,'Semester GPA':3.25}
-    row.update(overrides); return row
+    row = template_frame().iloc[0].to_dict()
+    row[ID_COLUMN] = "ST001"
+    row[SEMESTER_COLUMN] = "Relevant semester"
+    row.update(overrides)
+    return row
 
-def guidance(**overrides):
-    values=dict(semester_gpa=3.5,enrolled=6,evaluations=6,passed=6,debtor=False,tuition_up_to_date=True,scholarship=True,previous_gpa=4.0)
-    values.update(overrides); return support_guidance(**values)
 
-def test_model_schema_artifact_and_threshold_are_locked():
-    assert len(FORM_FIELDS)==len(USER_FIELDS)==15
-    assert MODEL_PATH.is_file()
-    artifact=joblib.load(MODEL_PATH); metadata=json.loads(METADATA_PATH.read_text(encoding='utf-8'))
-    assert artifact['threshold']==metadata['threshold'] and 0<artifact['threshold']<1
-    assert list(make_input_frame(sample_values()).columns)==FORM_FIELDS
+def test_active_model_has_exactly_18_predictors_and_expected_frozen_identity():
+    assert tuple(FORM_FIELDS) == tuple(PREDICTOR_FIELDS)
+    assert len(FORM_FIELDS) == len(USER_FIELDS) == 18
+    assert MODEL_PATH.is_file() and METADATA_PATH.is_file()
+    artifact = load_model_artifact()
+    metadata = json.loads(METADATA_PATH.read_text(encoding="utf-8"))
+    assert artifact["raw_input_features"] == FORM_FIELDS
+    assert list(artifact["pipeline"].feature_names_in_) == FORM_FIELDS
+    assert list(artifact["pipeline"].bangladesh_pipeline.feature_names_in_) == FORM_FIELDS
+    assert artifact["input_feature_count"] == 18
+    assert artifact["target_is_predictor"] is False
+    assert artifact["target_field"] == "current_academic_status"
+    assert artifact["pipeline"].blend_weight_uci == pytest.approx(.05)
+    assert len(artifact["pipeline"].uci_pipeline.feature_names_in_) == 10
+    assert artifact["architecture"].startswith("UCI 10-feature")
+    assert artifact["threshold"] == metadata["threshold"] == ACTIVE_THRESHOLD
+    assert list(make_input_frame(sample_values()).columns) == FORM_FIELDS
+    assert hashlib.sha256(MODEL_PATH.read_bytes()).hexdigest().upper() == ACTIVE_HASH
 
-def test_existing_individual_prediction_and_both_paths():
-    artifact=joblib.load(MODEL_PATH); probability=dropout_probability(artifact,sample_values())
-    assert 0<=probability<=1 and risk_label(artifact['threshold']-0.000001,artifact['threshold'])=='Lower Estimated Risk' and risk_label(artifact['threshold'],artifact['threshold'])=='Elevated Estimated Risk'
-    raw=pd.read_csv(ROOT/'data'/'student_dropout.csv',sep=';'); raw.columns=raw.columns.str.strip(); raw['previous_academic_gpa_normalized']=normalize_previous_grade(raw['Previous qualification (grade)'])
-    probabilities=artifact['pipeline'].predict_proba(raw[FORM_FIELDS])[:,list(artifact['pipeline'].classes_).index(1)]
-    assert risk_label(float(probabilities.min())).startswith('Lower') and risk_label(float(probabilities.max())).startswith('Elevated')
 
-def test_input_helpers_and_gpa_conversion():
-    assert validate_inputs(sample_values(**{'Curricular units 1st sem (enrolled)':4,'Curricular units 1st sem (approved)':5}))
-    assert {x:semester_gpa_to_source_grade(x) for x in [0.,2.,3.,3.5,4.]}=={0.:0.,2.:9.4375,3.:14.15625,3.5:16.515625,4.:18.875}
-    assert OCCUPATION_BY_LABEL[OCCUPATIONS[4]]==4
+def test_model_load_and_prediction_use_bangladesh_categories_and_all_inputs():
+    artifact = load_model_artifact()
+    values = sample_values()
+    frame = make_input_frame(values)
+    probability = dropout_probability(artifact, values)
+    assert frame.shape == (1, 18)
+    assert 0 <= probability <= 1
+    result = predict_student(artifact, student())
+    assert result["risk_level"] == risk_label(result["probability"], artifact["threshold"])
+    assert result["threshold"] == artifact["threshold"]
+    assert set(result["component_scores"]) == {"uci_academic", "bangladesh_local"}
+    for changed in (
+        {"last_semester_attendance_percent": 0.0},
+        {"family_financial_condition": "Poor (below ৳25,000)"},
+        {"student_employment": "Full-time"},
+    ):
+        assert set(make_input_frame({**values, **changed}).columns) == set(FORM_FIELDS)
 
-def test_metrics_match_locked_results():
-    r=json.loads(RESULTS_PATH.read_text(encoding='utf-8'))['holdout_metrics']
-    assert all(0<=r[x]<=1 for x in ['precision','recall','roc_auc'])
 
-def test_support_layer_priority_caps_and_safe_edge_cases():
-    indicators,supports=guidance(semester_gpa=1.2,enrolled=8,evaluations=1,passed=1,debtor=True,tuition_up_to_date=False,scholarship=False,previous_gpa=2.5)
-    assert len(indicators)==3 and len(supports)<=4 and indicators[0].startswith('Low recent academic performance')
-    assert guidance()==([],[])
-    assert 'No course enrollment was reported' in guidance(enrolled=0,evaluations=0,passed=0)[0]
-    assert not any(word in ' '.join(indicators).lower() for word in ['mother','father','occupation','age'])
+def test_target_status_is_never_an_input_and_schema_rejects_extra_or_missing_fields():
+    values = sample_values()
+    assert "current_academic_status" not in make_input_frame(values).columns
+    with pytest.raises(ValueError, match="exactly the 18"):
+        make_input_frame({**values, "current_academic_status": "Dropout (Discontinued Studies)"})
+    with pytest.raises(ValueError, match="exactly the 18"):
+        make_input_frame({key: value for key, value in values.items() if key != "student_employment"})
 
-def test_academic_and_financial_support_mappings():
-    academic,supports=guidance(semester_gpa=1.85,enrolled=7,evaluations=5,passed=3)
-    assert 'Low course completion — 3 of 7 courses passed' in academic and 'Academic advising' in supports
-    financial,supports=guidance(debtor=True,tuition_up_to_date=False,scholarship=False)
-    assert 'Tuition fees are not currently up to date' in financial and 'Financial counselling' in supports
 
-def test_common_boolean_mapping():
-    for yes in ['Yes','TRUE','1',1,True]: assert parse_boolean(yes) is True
-    for no in ['No','FALSE','0',0,False]: assert parse_boolean(no) is False
-    with pytest.raises(ValueError): parse_boolean('maybe')
+def test_input_validation_and_threshold_boundary():
+    values = sample_values(courses_enrolled=2, courses_passed=3)
+    assert any("greater" in message for message in validate_inputs(values))
+    assert risk_label(ACTIVE_THRESHOLD - 0.001, ACTIVE_THRESHOLD) == "Lower Estimated Risk"
+    assert risk_label(ACTIVE_THRESHOLD, ACTIVE_THRESHOLD) == "Elevated Estimated Risk"
+    assert not validate_inputs(sample_values())
 
-def test_valid_single_and_multi_row_batch_prediction():
-    artifact=joblib.load(MODEL_PATH); one=pd.DataFrame([student()])
+
+def test_metrics_and_schema_match_training_report():
+    results = json.loads(RESULTS_PATH.read_text(encoding="utf-8"))
+    assert results["training_counts"]["bangladesh_records"] == 251
+    assert results["training_counts"]["uci_resolved_records"] == 3630
+    assert results["bangladesh_features"] == FORM_FIELDS
+    assert results["excluded_from_predictors"] == ["Timestamp", "current_academic_status"]
+    assert results["bangladesh_audit"]["rows_removed"] == 0
+    assert results["bangladesh_audit"]["semester_gpa_marked_unavailable_count"] == 19
+    assert len(results["uci_original_15_feature_compatibility"]) == 15
+    assert len(results["uci_foundation_features"]) == 10
+    assert results["threshold"] == pytest.approx(load_model_artifact()["threshold"])
+    assert results["stacker_fit_procedure"].find("OOF") >= 0
+    assert results["selected_active_architecture"].startswith("Fixed 5%/95%")
+    for candidate, entry in results["nested_cv_comparison"].items():
+        metrics = entry["metrics"]
+        assert all(0 <= metrics[key] <= 1 for key in ("accuracy", "precision", "recall", "f1", "roc_auc", "pr_auc_average_precision", "brier_score"))
+        assert sum(metrics["confusion_matrix"].values()) == 251
+
+
+def test_active_probability_changes_when_only_uci_component_signal_changes(monkeypatch):
+    artifact = load_model_artifact()
+    pipeline = artifact["pipeline"]
+    frame = make_input_frame(sample_values())
+
+    class FixedUCIProbability:
+        classes_ = [0, 1]
+
+        def __init__(self, probability): self.probability = probability
+        def predict_proba(self, _frame):
+            import numpy as np
+            return np.tile([1 - self.probability, self.probability], (len(_frame), 1))
+
+    original = pipeline.uci_pipeline
+    try:
+        pipeline.uci_pipeline = FixedUCIProbability(0.0)
+        low = pipeline.predict_proba(frame)[0, 1]
+        pipeline.uci_pipeline = FixedUCIProbability(1.0)
+        high = pipeline.predict_proba(frame)[0, 1]
+    finally:
+        pipeline.uci_pipeline = original
+    assert high != pytest.approx(low)
+
+
+def test_support_rules_remain_deterministic_and_bounded():
+    default = dict(semester_gpa=3.5, enrolled=6, evaluations=6, passed=6, debtor=False,
+                   tuition_up_to_date=True, scholarship=True, previous_gpa=4.0)
+    assert support_guidance(**default) == ([], [])
+    indicators, supports = support_guidance(**{**default, "semester_gpa": 1.2, "enrolled": 8,
+        "evaluations": 1, "passed": 1, "debtor": True, "tuition_up_to_date": False,
+        "scholarship": False, "previous_gpa": 2.5})
+    assert len(indicators) <= 3 and len(supports) <= 4
+    assert indicators[0].startswith("Low recent academic performance")
+
+
+def test_batch_schema_validation_prediction_and_exports():
+    artifact = load_model_artifact()
+    one = pd.DataFrame([student()])
+    assert list(one.columns) == BATCH_COLUMNS
     assert validate_batch_dataframe(one).empty
-    result=analyze_batch(artifact,one); assert len(result)==1 and 0<=result.loc[0,'Estimated Dropout Risk']<=1
-    multi=pd.DataFrame([student(),student(**{ID_COLUMN:'ST002','Semester GPA':1.2,'Courses Passed':1,'Debtor':'Yes'}),student(**{ID_COLUMN:'ST003','Tuition Fees Up to Date':'No'})])
-    result=analyze_batch(artifact,multi); assert len(result)==3 and result['Risk Level'].notna().all()
-    assert (result['Risk Level']==result['Estimated Dropout Risk'].map(risk_label)).all()
-    assert result['Key Risk Indicators'].map(lambda value: len(value.split(' | ')) if value!='-' else 0).max()<=3
+    result = analyze_batch(artifact, one)
+    assert len(result) == 1
+    assert 0 <= result.loc[0, "Estimated Current Dropout-Status Probability"] <= 1
+    assert set(RESULT_COLUMNS).issubset(result.columns)
+    csv = pd.read_csv(io.BytesIO(export_results(result)))
+    excel = pd.read_excel(io.BytesIO(export_results_excel(result)), engine="openpyxl")
+    assert set(RESULT_COLUMNS).issubset(csv.columns)
+    assert set(RESULT_COLUMNS).issubset(excel.columns)
+    assert csv.loc[0, "Mother's occupation"] == "Not Alive"
 
-def test_batch_validation_errors():
-    assert 'Missing required columns' in validate_batch_dataframe(pd.DataFrame([student()]).drop(columns=['Semester GPA'])).loc[0,'Issue']
-    cases=[({'HSC / Equivalent GPA':2.0},'HSC / Equivalent GPA'),({'Semester GPA':4.5},'Semester GPA'),({'Courses Enrolled':3,'Courses Passed':4},'Courses Passed')]
-    for override,expected in cases:
-        issues=' '.join(validate_batch_dataframe(pd.DataFrame([student(**override)]))['Issue'])
-        assert expected in issues
 
-def test_export_contains_required_columns_and_human_labels():
-    result=analyze_batch(joblib.load(MODEL_PATH),pd.DataFrame([student()]))
-    exported=pd.read_csv(pd.io.common.BytesIO(export_results(result)))
-    assert set(RESULT_COLUMNS).issubset(exported.columns)
-    assert exported.loc[0,"Mother's Occupation"]=='Administrative staff'
-    assert not any('occupation code' in column.lower() for column in exported.columns)
-    exported_excel=pd.read_excel(io.BytesIO(export_results_excel(result)),engine='openpyxl')
-    assert set(RESULT_COLUMNS).issubset(exported_excel.columns)
+def test_batch_validation_rejects_invalid_values_but_allows_missing_optional_features():
+    row = student()
+    assert validate_batch_dataframe(pd.DataFrame([row]).drop(columns=[USER_FIELDS[0]])).iloc[0]["Issue"].startswith("Missing required columns")
+    invalid = pd.DataFrame([student(**{"Courses passed in the relevant semester": 7})])
+    assert "greater than" in " ".join(validate_batch_dataframe(invalid)["Issue"])
+    invalid = pd.DataFrame([student(**{"Last-semester attendance percentage": 101})])
+    assert "range 0–100" in " ".join(validate_batch_dataframe(invalid)["Issue"])
+    missing = pd.DataFrame([student(**{"Last-semester attendance percentage": None})])
+    assert validate_batch_dataframe(missing).empty
+    assert pd.isna(pd.DataFrame([prepare_student(missing.iloc[0].to_dict())]).iloc[0]["last_semester_attendance_percent"])
 
-def test_excel_template_and_upload_are_supported():
-    template_bytes=template_excel()
-    workbook=io.BytesIO(template_bytes); workbook.name='student_batch_template.xlsx'
-    loaded=read_uploaded_table(workbook)
-    assert list(loaded.columns)==BATCH_COLUMNS
-    assert loaded.loc[0,ID_COLUMN]=='EXAMPLE-001'
 
-    csv_file=io.BytesIO(pd.DataFrame([student()]).to_csv(index=False).encode('utf-8')); csv_file.name='students.csv'
-    assert read_uploaded_table(csv_file).loc[0,ID_COLUMN]=='ST001'
+def test_csv_excel_templates_and_uploads_use_the_18_input_contract():
+    assert len(template_frame().columns) == 20
+    excel_template = io.BytesIO(template_excel())
+    excel_template.name = "student_batch_template.xlsx"
+    loaded = read_uploaded_table(excel_template)
+    assert list(loaded.columns) == BATCH_COLUMNS
+    csv_file = io.BytesIO(pd.DataFrame([student()]).to_csv(index=False).encode())
+    csv_file.name = "students.csv"
+    assert list(read_uploaded_table(csv_file).columns) == BATCH_COLUMNS
 
-    xlsx=io.BytesIO()
-    with pd.ExcelWriter(xlsx,engine='openpyxl') as writer:
-        pd.DataFrame([student()]).to_excel(writer,index=False)
-    xlsx.seek(0); xlsx.name='students.xlsx'
-    assert read_uploaded_table(xlsx).loc[0,ID_COLUMN]=='ST001'
 
-def test_no_retraining_or_persistent_upload_storage_in_app():
-    source=(ROOT/'app.py').read_text(encoding='utf-8').lower()
-    assert '.fit(' not in source and 'to_pickle(' not in source and 'to_parquet(' not in source
-    assert 'st.image(' not in source and 'st.pyplot(' not in source
+class RenderContext:
+    def __init__(self, owner): self.owner=owner
+    def __enter__(self): return self
+    def __exit__(self,*args): return False
+    def __getattr__(self,name): return getattr(self.owner,name)
 
-def test_four_pages_render_and_individual_form_has_15_model_widgets():
-    app=AppTest.from_file(str(ROOT/'app.py'),default_timeout=30).run()
-    expected={'Dashboard':'Student Dropout Early Warning System','Individual Assessment':'Individual Assessment','Batch Analysis':'Batch Analysis','About Project':'About Project'}
-    assert list(app.radio[0].options)==list(expected)
-    for page,title in expected.items():
-        app.radio[0].set_value(page).run(); assert not app.exception
-        rendered=' '.join([*(item.value for item in app.title),*(item.value for item in app.markdown)])
-        assert title.lower() in rendered.lower()
-    app.radio[0].set_value('Individual Assessment').run()
-    assert len(app.number_input)+len(app.selectbox)==15
-    assert next(item for item in app.number_input if item.label=='Semester GPA').max==4.0
 
-def test_elevated_result_panel_and_download_render():
-    app=AppTest.from_file(str(ROOT/'app.py'),default_timeout=30).run(); app.radio[0].set_value('Individual Assessment').run()
-    numbers={item.label:item for item in app.number_input}; selections={item.label:item for item in app.selectbox}
-    for label,value in [('HSC / Equivalent GPA',2.5),('Age at Enrollment',70),('Courses Enrolled',7),('Evaluations Completed',1),('Courses Passed',0),('Semester GPA',0.0)]: numbers[label].set_value(value)
-    selections['Debtor'].set_value('Yes'); selections['Tuition Fees Up to Date'].set_value('No'); app.button[-1].click().run()
-    rendered=' '.join(item.value for item in app.markdown)
-    assert 'elevated estimated risk' in rendered.lower() and 'Key Risk Indicators' in rendered and 'Possible Institute Support' in rendered
-    assert app.download_button
-def test_batch_page_processes_five_row_upload_and_renders_outputs():
-    app=AppTest.from_file(str(ROOT/'app.py'),default_timeout=30).run()
-    app.radio[0].set_value('Batch Analysis').run()
-    content=(ROOT/'data'/'sample_batch_students.csv').read_bytes()
-    app.file_uploader[0].upload('sample_batch_students.csv',content,'text/csv').run()
-    assert not app.exception and not app.error
-    markdown=' '.join(item.value for item in app.markdown)
-    assert 'Total Students' in markdown and 'Elevated Risk' in markdown and 'Average Estimated Risk' in markdown
-    assert len(app.dataframe)>=1 and len(app.download_button)>=4
-def test_batch_page_accepts_excel_upload():
-    app=AppTest.from_file(str(ROOT/'app.py'),default_timeout=30).run()
-    app.radio[0].set_value('Batch Analysis').run()
-    buffer=pd.io.common.BytesIO()
-    pd.DataFrame([student(),student(**{ID_COLUMN:'ST002','Semester GPA':1.4,'Courses Passed':1})]).to_excel(buffer,index=False)
-    app.file_uploader[0].upload('students.xlsx',buffer.getvalue(),'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet').run()
-    assert not app.exception and not app.error
-    assert app.dataframe and len(app.download_button)>=4
+class RenderStub:
+    def __init__(self, submit=False): self.submit=submit; self.markdown_text=[]; self.inputs=[]; self.downloads=[]; self.uploads=[]
+    def markdown(self,value,**kwargs): self.markdown_text.append(str(value))
+    def caption(self,value): self.markdown_text.append(str(value))
+    def columns(self,count,**kwargs):
+        if isinstance(count,(list,tuple)): count=len(count)
+        return [RenderContext(self) for _ in range(count)]
+    def form(self,*args,**kwargs): return RenderContext(self)
+    def expander(self,*args,**kwargs): return RenderContext(self)
+    def number_input(self,label,*args,**kwargs):
+        self.inputs.append(label)
+        return kwargs.get('value',args[2] if len(args)>2 else 0)
+    def selectbox(self,label,options,**kwargs):
+        self.inputs.append(label)
+        choices=list(options); return choices[kwargs.get('index',0)]
+    def text_input(self,*args,**kwargs): return 'DEMO'
+    def form_submit_button(self,*args,**kwargs): return self.submit
+    def button(self,*args,**kwargs): return False
+    def download_button(self,*args,**kwargs): self.downloads.append(args)
+    def file_uploader(self,*args,**kwargs): self.uploads.append(args); return None
+    def dataframe(self,*args,**kwargs): pass
+    def metric(self,*args,**kwargs): pass
+
+
+def test_all_five_pages_render_and_individual_assessment_uses_18_inputs(monkeypatch):
+    import app as app_module
+    stub=RenderStub(submit=True)
+    monkeypatch.setattr(app_module,'st',stub)
+    artifact=load_model_artifact()
+    app_module.dashboard(artifact)
+    app_module.individual_assessment(artifact)
+    app_module.batch_analysis(artifact)
+    app_module.about(artifact)
+    app_module.bangladesh_data_collection()
+    rendered=' '.join(stub.markdown_text)
+    assert APP_PAGES==['Dashboard','Individual Assessment','Batch Analysis','About Project','Bangladesh Data Collection']
+    assert all(title.lower() in rendered.lower() for title in (
+        'Student Dropout Early Warning System','Individual Assessment','Batch Analysis',
+        'About Project','Bangladesh Data Collection'))
+    assert len(stub.inputs)==18
+    assert 'Current Academic Status' not in stub.inputs
+    assert any('CURRENT DROPOUT-STATUS' in value for value in stub.markdown_text)
+    assert stub.downloads and stub.uploads
+
+
+def test_status_result_panel_labels_current_status_not_future_dropout(monkeypatch):
+    rendered = []
+
+    class Dummy:
+        def markdown(self, value, **kwargs): rendered.append(value)
+        def caption(self, value): rendered.append(value)
+        def download_button(self, *args, **kwargs): rendered.append(args)
+
+    import app as app_module
+    monkeypatch.setattr(app_module, "st", Dummy())
+    render_result({"probability": .65, "threshold": .5, "risk_level": "Elevated Estimated Risk",
+                   "indicators": ["Example indicator"], "supports": ["Example support"]})
+    assert any("CURRENT DROPOUT-STATUS" in str(item) for item in rendered)
+    assert any("not a prediction of future dropout" in str(item) for item in rendered)

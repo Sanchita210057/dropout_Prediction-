@@ -4,6 +4,7 @@ __pycache__/
 *$py.class
 .pytest_cache/
 .pytest_tmp/
+.pytest_tmp_*/
 .pytest_final_*/
 .pytest_gpa_*/
 .mypy_cache/
@@ -36,8 +37,14 @@ Thumbs.db
 !.env.example
 .streamlit/secrets.toml
 
+# Avoid committing other raw-data drops or form exports by accident.
+/data/**/raw/
+/data/bangladesh_questionnaire/**/Bangladesh University Research Responses.xlsx
+/data/bangladesh_questionnaire/**/Form Responses*.xlsx
+
 # Generated model artifacts (directory retained with .gitkeep)
 models/*
 !models/.gitkeep
-!models/dropout_model.joblib
-!models/model_metadata.json
+!models/combined_uci_bangladesh_18_v2/
+!models/combined_uci_bangladesh_18_v2/*.joblib
+!models/combined_uci_bangladesh_18_v2/*.json

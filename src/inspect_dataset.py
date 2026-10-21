@@ -15,7 +15,9 @@ import pandas as pd
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_DATASET = PROJECT_ROOT / "data" / "student_dropout.csv"
+from src.training_data_paths import uci_dataset_path
+
+DEFAULT_DATASET = uci_dataset_path()
 TARGET = "Target"
 
 # UCI stores these semantic categories as integer codes.

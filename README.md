@@ -1,119 +1,98 @@
-# Student Dropout Early Warning System Using Machine Learning
+# Student Dropout Early Warning System
 
-The active system uses one **15-input Random Forest** for Individual Assessment and Batch Analysis. Its four additional inputs are mother's education, father's education, gender, and marital status. Attendance percentage is not included because it is not present in the UCI source dataset. The model and user interface use the same strict 15-field schema; incompatible artifacts are rejected rather than silently loaded. See [the 15-input migration and limitations](docs/14_input_migration.md).
+Project A's active model is a two-component **UCI + Bangladesh 18-input ensemble**. Model A supplies an academic signal learned from resolved Portuguese UCI outcomes; Model B uses all 18 Bangladesh questionnaire predictors; Model C combines them. The target the app estimates is **reported current Bangladesh dropout status**, not a validated future-dropout outcome.
 
-This academic project estimates elevated risk of later university dropout after a completed semester. It supports timely review—not automatic decisions or certainty about a student's future.
+## Active model contract
 
-## Prediction point and target
-
-The prediction point is the **end of the first semester**. The model uses background, financial, and Semester-1 performance information available then.
-
-- Positive class: Dropout = 1
-- Negative class: Graduate = 0
-- Enrolled students are excluded because their final outcomes are unresolved
-- All Semester-2 and final-outcome information is excluded
-
-## Dataset
-
-The project uses the UCI Machine Learning Repository dataset **Predict Students' Dropout and Academic Success**.
-
-| Cohort | Students |
-|---|---:|
-| Original dataset | 4,424 |
-| Graduate | 2,209 |
-| Dropout | 1,421 |
-| Enrolled excluded | 794 |
-| Resolved modeling cohort | 3,630 |
-
-Dropout prevalence is 39.15%.
-
-## Active 15-input form
+The active artifact is `models/combined_uci_bangladesh_18_v2/weighted_ensemble_dropout_status_18.joblib`. Both Individual Assessment and Batch Analysis use it and accept exactly these 18 inputs, in the order defined by `src/bangladesh_collection.py`:
 
 1. HSC / Equivalent GPA
-2. Age at Enrollment
-3. Mother's Occupation
-4. Father's Occupation
-5. Mother's Education
-6. Father's Education
+2. Age at enrollment
+3. Mother's occupation
+4. Father's occupation
+5. Mother's highest education
+6. Father's highest education
 7. Gender
-8. Marital Status
-9. Scholarship Holder
-10. Debtor
-11. Tuition Fees Up to Date
-12. Courses Enrolled
-13. Evaluations Completed
-14. Courses Passed
-15. Semester GPA (0.00–4.00)
+8. Marital status
+9. Scholarship holder
+10. Have any debt
+11. Tuition fees up to date
+12. Courses enrolled in the relevant semester
+13. Evaluations completed in the relevant semester
+14. Courses passed in the relevant semester
+15. Semester GPA (native university scale)
+16. Last-semester attendance percentage
+17. Family financial condition
+18. Student employment
 
-Admission Grade was removed. The source Previous Qualification Grade is normalized during training as `source grade / 190 × 5` and renamed `previous_academic_gpa_normalized`. Its exact observed support is 2.50–5.00, which becomes the website's HSC / Equivalent GPA range. This is a numerical scale normalization only; it does not claim academic equivalence between national grading systems.
+The exact local parent occupation categories `Not Alive` and `Housewife` are preserved. `Current Academic Status` is the separate target, never an input: Dropout = 1; Running = 0; Passed = 0. Running is not proof of eventual persistence.
 
-Occupation, education, gender, and marital-status codes are presented using documented readable labels and mapped to source values. Semester pass rate is calculated inside the pipeline as `Courses Passed / Courses Enrolled`; zero enrolled courses produces a rate of zero.
+## Model A: UCI academic foundation
 
-For interface compatibility, the visible Semester GPA is converted internally using `source semester grade = semester GPA / 4 × 18.875`. The user never enters or sees the source 0–18.875 value. This numerical normalization does not imply equivalence between Portuguese and Bangladeshi grading systems.
+The UCI source contains 4,424 records. All **3,630 resolved** records (Graduate=0, Dropout=1) train Model A; 794 unresolved Enrolled records are excluded. After auditing all 15 predictors used by the original UCI model, ten were meaningfully aligned: prior qualification grade, age, gender, scholarship, debtor, tuition status, first-semester enrolled/evaluated/passed counts, and first-semester grade. The complete keep/exclude table and transformations are in `reports/combined_uci_bangladesh_18_v2/model_architecture_and_evaluation.md`.
 
-## Model development and results
+UCI prior grade is linearly mapped from 0–190 to the interface's 0–5 range; first-semester grade is linearly mapped from the observed 0–18.875 range to 0–5. These are numerical range alignments only—not equivalence between Portuguese and Bangladeshi grading systems or qualifications. Binary gender/support values are mapped only to matching documented labels. UCI parent occupation/education and marital codes are excluded rather than forced into different Bangladeshi categories. Attendance, family income and employment do not exist in UCI and are not fabricated. Unrecognized local categorical values remain unrecognized by the UCI encoder.
 
-Preprocessing and feature engineering are contained in a scikit-learn pipeline. The active Random Forest was evaluated with repeated stratified cross-validation on training data. The holdout was not used for threshold selection; it had been consulted in earlier project iterations and is not a pristine external validation set.
+## Model B: Bangladesh local component
 
-The active model is **Random Forest**. The classification threshold **0.52** was selected using training-only out-of-fold probabilities, subject to the documented minimum precision/recall gate. The fixed holdout was not used for threshold selection.
+Model B was trained on all **251** Bangladesh questionnaire records and all 18 approved features. The label distribution is 52 Dropout and 199 class-0 (Running/Passed) responses. Nineteen zero Semester GPA values that coincide with some courses passed but fewer than enrolled are treated as unavailable; rows and course counts are retained. Imputation and encoding remain inside training pipelines. The released workbook has no name, student-number, email, phone, or contact fields. It retains the original unique Google Forms submission timestamps; timestamps are not model inputs but may enable linkage with outside information.
 
-| Held-out metric | Result |
-|---|---:|
-| Accuracy | 87.9% |
-| Balanced accuracy | 87.5% |
-| Precision | 83.6% |
-| Recall | 85.9% |
-| F1 | 84.7% |
-| ROC-AUC | 94.1% |
-| PR-AUC | 93.1% |
-| Brier score | 0.1011 |
+## Model C: ensemble comparison and selection
 
-Confusion matrix (rows actual Graduate/Dropout; columns predicted Graduate/Dropout): `[[394, 48], [40, 244]]`. The same holdout had been consulted in earlier project iterations, so these results are a project benchmark rather than pristine external validation. Full CV and holdout metrics are recorded in `reports/uci_sem1/training_results_15_input.json`.
+The selected app architecture is a **calibrated fixed 5% UCI / 95% Bangladesh probability blend**, using the expanded ten-feature UCI foundation. The active threshold is **0.3040698561883773**. The UCI share was not increased. A separate simple Logistic Regression stacker was trained only on Bangladesh out-of-fold base predictions; its coefficients and fold variation are recorded in the report. The stacker achieved slightly higher ROC-AUC, but lower PR-AUC and worse Brier score, with more false positives. Therefore the fixed 5% blend was selected over stacking. Inactive baseline and stacker artifacts have been moved to the external local archive; their comparison metrics remain documented in the evaluation report.
 
-## Streamlit interface
+Results below are nested stratified five-fold CV on the 251 Bangladesh records. Selection, calibration/stacking, and thresholds use training-only folds; the outer fold is untouched. The threshold maximizes F1 with at most 50% of training cases flagged. A 63-record holdout had already been inspected in earlier work, so it is not reused or described as fresh validation.
 
-The four pages are Dashboard, Individual Assessment, Batch Analysis, and About Project. The assessment page loads the frozen artifact from `models/uci_sem1/`, calls `predict_proba()`, reads the Dropout=1 probability, and applies the saved threshold. The application never retrains.
+| Candidate | Accuracy | Balanced accuracy | Precision | Recall | F1 | ROC-AUC | PR-AUC | Brier | TN / FP / FN / TP |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| Bangladesh-only 18-input | 0.972 | 0.961 | 0.925 | 0.942 | 0.933 | 0.983 | 0.933 | 0.032 | 195 / 4 / 3 / 49 |
+| UCI foundation, six numeric inputs | 0.904 | 0.847 | 0.780 | 0.750 | 0.765 | 0.915 | 0.750 | 0.100 | 188 / 11 / 13 / 39 |
+| UCI foundation, ten aligned inputs | 0.908 | 0.829 | 0.837 | 0.692 | 0.758 | 0.939 | 0.810 | 0.073 | 192 / 7 / 16 / 36 |
+| Archived six-feature 5%/95% blend | 0.972 | 0.961 | 0.925 | 0.942 | 0.933 | 0.985 | 0.911 | 0.032 | 195 / 4 / 3 / 49 |
+| **Selected ten-feature 5%/95% blend** | **0.964** | **0.956** | **0.891** | **0.942** | **0.916** | **0.986** | **0.935** | **0.032** | **193 / 6 / 3 / 49** |
+| OOF-selected weighted blend, ten-feature UCI | 0.968 | 0.959 | 0.907 | 0.942 | 0.925 | 0.986 | 0.933 | 0.033 | 194 / 5 / 3 / 49 |
+| OOF Logistic Regression stacker | 0.952 | 0.949 | 0.845 | 0.942 | 0.891 | 0.987 | 0.919 | 0.037 | 190 / 9 / 3 / 49 |
 
+The selected blend's PR-AUC is only about 0.002 above Bangladesh-only, with the same three false negatives but two more false positives. Brier scores for all CV candidates beat the constant-training-prevalence baseline of 0.164, but the very small local sample and nested selection make these estimates uncertain. The expanded UCI component appears to add a modest ranking signal; it does not establish a reliable gain or justify increasing its 5% share. Stack model coefficients, thresholds, fold-specific weights, confusion matrices, and prevalence Brier comparisons are in `reports/combined_uci_bangladesh_18_v2/model_architecture_and_evaluation.md` and `training_results.json`.
 
-The source model was trained using first-semester academic performance. The prototype interface presents these fields as the student's most recently completed semester for easier local data collection. Local validation is required before operational use across different semester stages.
+## Important limitations
 
-## Local data collection plan
+- UCI labels are resolved graduate/dropout outcomes; Bangladesh labels are self-reported current status. They are not pooled or treated as identical.
+- Bangladesh predictor timing relative to discontinuation is unknown. Attendance, semester results, tuition/debt, finances, and employment may be contemporaneous or retrospective. Do not describe this as prospective dropout prediction.
+- The Bangladesh sample is a small convenience sample. There is no new independent Bangladesh evaluation cohort or external validation.
+- Brier improvement over a prevalence baseline does not establish transportability or calibration in other institutions.
+- Income ranges are provisional questionnaire brackets, not official poverty definitions. The system supports human review and should not be used for automated adverse decisions.
+- Keep raw questionnaire responses private; do not publish microdata.
 
-A future Google Form should collect the same 15 user fields shown above, plus these research-only fields:
+## Run and retrain
 
-- Current Semester / Academic Year
-- Anonymous Follow-Up ID
-
-Unlabeled form responses cannot immediately retrain a supervised model. Future actual outcomes must be linked to each response through the anonymous ID before the data can support local validation, recalibration, or retraining.
-
-## Leakage controls
-
-The final model excludes Target, every Semester-2 variable, final-outcome information, Application Mode, Application Order, Course code, Nationality, unemployment, inflation, and GDP. No information occurring after the prediction point is used.
-
-## Local use
-
-Python 3.12 is the deployment target. The artifact was trained under Python 3.14.5 with scikit-learn 1.9.1; Python 3.12 must be tested independently before deployment.
-
-```bash
+```powershell
 python -m pip install -r requirements.txt
-python -m pytest -q --basetemp=.pytest_tmp
+python -m pytest -q
 python -m streamlit run app.py
 ```
 
-## Limitations
+Normal application predictions use only the saved artifacts and do not load either training dataset. The released repository includes both datasets for reproducibility. Training and data inspection default to these paths:
 
-- Data comes from Portuguese higher education and has not been validated in Bangladesh.
-- Academic systems may differ between countries.
-- Occupation categories originate from the source dataset.
-- Probability calibration may require local recalibration.
-- Predictions are estimates, not certainties.
-- Outputs should support, not replace, human judgement.
-- Operational deployment requires local longitudinal validation or retraining.
+- `data/student_dropout.csv`
+- `data/Bangladesh University Research Responses.xlsx`
 
-## Local dashboard and batch analysis
+To use authorized copies elsewhere, optionally override the paths. PowerShell:
 
-The dashboard has four pages: Dashboard, Individual Assessment, Batch Analysis, and About Project. Batch Analysis accepts in-memory CSV or Excel (.xlsx) exports from Google Forms/Sheets, validates every row against all 15 inputs, applies the same frozen 15-input Random Forest and 0.52 threshold, summarizes risk and warning indicators, and provides CSV or Excel results downloads.
+```powershell
+$env:CSE_UCI_DATASET_PATH = "E:\authorized-data\student_dropout.csv"
+$env:CSE_BANGLADESH_DATASET_PATH = "E:\authorized-data\Bangladesh University Research Responses.xlsx"
+```
 
-Use **Download CSV Template** or **Download Excel Template** on the Batch Analysis page for the exact schema. `Anonymous Follow-Up ID` and `Current Semester / Academic Year` are metadata only; they never enter the model. Uploaded files are not written to disk or stored in a database. Avoid names, phone numbers, email addresses, and other unnecessary identifying data.
+Bash (including Linux):
 
-A five-record demonstration file is available at `data/sample_batch_students.csv`.
+```bash
+export CSE_UCI_DATASET_PATH="/path/to/student_dropout.csv"
+export CSE_BANGLADESH_DATASET_PATH="/path/to/Bangladesh University Research Responses.xlsx"
+```
+
+The application resolves its model and default data paths relative to `app.py` with `pathlib`, so it does not depend on a Windows drive letter. Streamlit Community Cloud currently defaults to Python 3.12; select a compatible Python version in the app's deployment settings and keep the pinned scikit-learn version from `requirements.txt` to load the saved artifact.
+
+To reproduce the final-model evaluation, deliberately run `python -m src.train_combined_ensemble_18` after confirming both sources; it writes artifacts and reports under the active model paths, so it is not part of normal use. The active artifact contains both fitted components; no separate component model file is needed at inference.
+
+The five app pages are Dashboard, Individual Assessment, Batch Analysis, About Project, and Bangladesh Data Collection. Individual and batch assessment use the same 18 inputs, selected ensemble, result threshold, and support guidance. Component signals are separately labeled as research estimates and are not presented as validated future-outcome probabilities. CSV/Excel batch processing remains in memory. Project B is a separate local archive and is not part of this application.
