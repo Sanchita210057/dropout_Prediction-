@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 
 import pandas as pd
-from app import FORM_FIELDS, MODEL_PATH, bangladesh_data_collection, bangladesh_research_excel
+from app import APP_PAGES, FORM_FIELDS, MODEL_PATH, bangladesh_data_collection, bangladesh_research_excel
 from src.bangladesh_collection import (
     BANGLADESH_EXTENDED_FEATURES,
     EXPORT_COLUMNS,
@@ -227,9 +227,9 @@ def test_apps_script_updates_existing_form_and_guards_responses_before_mutation(
 
 def test_collection_page_is_separate_and_does_not_change_production_schema():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
-    assert "'Bangladesh Data Collection'" in source
+    assert "'Bangladesh Data Collection'" not in APP_PAGES
     assert "elif page=='About Project': about(artifact)" in source
-    assert "else: bangladesh_data_collection()" in source
+    assert "else: bangladesh_data_collection()" not in source
     assert "function" not in source
     assert len(FORM_FIELDS) == 18
 

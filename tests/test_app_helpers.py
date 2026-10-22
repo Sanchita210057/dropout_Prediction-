@@ -217,7 +217,7 @@ class RenderContext:
 
 
 class RenderStub:
-    def __init__(self, submit=False): self.submit=submit; self.markdown_text=[]; self.inputs=[]; self.downloads=[]; self.uploads=[]
+    def __init__(self, submit=False): self.submit=submit; self.markdown_text=[]; self.inputs=[]; self.downloads=[]; self.uploads=[]; self.buttons=[]
     def markdown(self,value,**kwargs): self.markdown_text.append(str(value))
     def caption(self,value): self.markdown_text.append(str(value))
     def columns(self,count,**kwargs):
@@ -233,14 +233,14 @@ class RenderStub:
         choices=list(options); return choices[kwargs.get('index',0)]
     def text_input(self,*args,**kwargs): return 'DEMO'
     def form_submit_button(self,*args,**kwargs): return self.submit
-    def button(self,*args,**kwargs): return False
+    def button(self,*args,**kwargs): self.buttons.append(args); return False
     def download_button(self,*args,**kwargs): self.downloads.append(args)
     def file_uploader(self,*args,**kwargs): self.uploads.append(args); return None
     def dataframe(self,*args,**kwargs): pass
     def metric(self,*args,**kwargs): pass
 
 
-def test_all_five_pages_render_and_individual_assessment_uses_18_inputs(monkeypatch):
+def test_public_pages_render_and_individual_assessment_uses_18_inputs(monkeypatch):
     import app as app_module
     stub=RenderStub(submit=True)
     monkeypatch.setattr(app_module,'st',stub)
@@ -249,16 +249,28 @@ def test_all_five_pages_render_and_individual_assessment_uses_18_inputs(monkeypa
     app_module.individual_assessment(artifact)
     app_module.batch_analysis(artifact)
     app_module.about(artifact)
-    app_module.bangladesh_data_collection()
     rendered=' '.join(stub.markdown_text)
-    assert APP_PAGES==['Dashboard','Individual Assessment','Batch Analysis','About Project','Bangladesh Data Collection']
+    assert APP_PAGES==['Dashboard','Individual Assessment','Batch Analysis','About Project']
+    assert 'Bangladesh Data Collection' not in APP_PAGES
     assert all(title.lower() in rendered.lower() for title in (
         'Student Dropout Early Warning System','Individual Assessment','Batch Analysis',
-        'About Project','Bangladesh Data Collection'))
+        'About Project','AI-powered student risk assessment using academic and local student factors.',
+        'Enter student information to generate a dropout risk assessment.',
+        'Analyze a CSV or Excel file of students using the same risk model and support rules.'))
     assert len(stub.inputs)==18
     assert 'Current Academic Status' not in stub.inputs
     assert any('CURRENT DROPOUT-STATUS' in value for value in stub.markdown_text)
+    assert any('Hybrid' in value and 'UCI + Bangladesh Model' in value for value in stub.markdown_text)
+    assert not any('Component research signals' in value or 'These indicators are based' in value for value in stub.markdown_text)
     assert stub.downloads and stub.uploads
+    assert any(args and args[0]=='Assess One Student' for args in stub.buttons)
+    assert any(args and args[0]=='Analyze Student Batch' for args in stub.buttons)
+    for expected in ('96.4%','89.1%','94.2%','91.6%','98.6%','93.5%','193','6','3','49',
+                     'This system helps identify students at higher dropout risk',
+                     '18 student input factors','Support recommendations'):
+        assert expected in rendered
+    assert any(args and args[0]=='Download CSV Template' for args in stub.downloads)
+    assert any(args and args[0]=='Download Excel Template' for args in stub.downloads)
 
 
 def test_status_result_panel_labels_current_status_not_future_dropout(monkeypatch):
