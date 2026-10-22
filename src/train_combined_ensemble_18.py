@@ -28,7 +28,7 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from src.bangladesh_collection import PREDICTOR_FIELDS, load_bangladesh_training_data
 from src.combined_ensemble_v2 import (
     StackedEnsemblePipeline, WeightedEnsemblePipeline, UCI_CATEGORICAL_FEATURES,
-    UCI_FOUNDATION_FEATURES, UCI_NUMERIC_FEATURES, uci_harmonized_frame,
+    UCI_FOUNDATION_FEATURES, UCI_NUMERIC_FEATURES, calibrator_logit_feature, uci_harmonized_frame,
 )
 from src.train_bangladesh_18 import fit_search as fit_bangladesh_search
 from src.training_data_paths import (
@@ -159,13 +159,11 @@ def choose_threshold(y: np.ndarray, p: np.ndarray) -> float:
 
 
 def calibrator_fit(p: np.ndarray, y: np.ndarray) -> LogisticRegression:
-    p = np.clip(p, 1e-6, 1 - 1e-6)
-    return LogisticRegression(C=1.0, solver="lbfgs", max_iter=2000).fit(np.log(p / (1 - p)).reshape(-1, 1), y)
+    return LogisticRegression(C=1.0, solver="lbfgs", max_iter=2000).fit(calibrator_logit_feature(p).reshape(-1, 1), y)
 
 
 def calibrator_predict(model: LogisticRegression, p: np.ndarray) -> np.ndarray:
-    p = np.clip(p, 1e-6, 1 - 1e-6)
-    return model.predict_proba(np.log(p / (1 - p)).reshape(-1, 1))[:, 1]
+    return model.predict_proba(calibrator_logit_feature(p).reshape(-1, 1))[:, 1]
 
 
 def fit_local(X: pd.DataFrame, y: pd.Series, folds: int) -> GridSearchCV:

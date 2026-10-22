@@ -7,10 +7,23 @@ from pathlib import Path
 import joblib
 import numpy as np
 import pandas as pd
+import pytest
 
 from src.bangladesh_collection import PREDICTOR_FIELDS, load_bangladesh_training_data
-from src.combined_ensemble_v2 import UCI_FOUNDATION_FEATURES, uci_harmonized_frame
-from src.train_combined_ensemble_18 import load_uci
+from src.combined_ensemble_v2 import (
+    COMBINED_PARENT_OCCUPATION_CHOICES,
+    UCI_FOUNDATION_FEATURES,
+    UCI_OCCUPATION_BY_LABEL,
+    UCI_MARITAL_TO_BANGLADESH,
+    bangladesh_component_frame,
+    calibrator_logit_feature,
+    marital_status_to_bangladesh,
+    parent_occupation_to_bangladesh,
+    parent_occupation_to_uci,
+    uci_occupation_code_to_broad,
+    uci_harmonized_frame,
+)
+from src.train_combined_ensemble_18 import calibrator_predict, load_uci
 from src.training_data_paths import bangladesh_dataset_path
 from src.train_combined_ensemble_18 import FEATURE_COMPATIBILITY
 from src.bangladesh_collection import synthetic_example_rows
@@ -53,7 +66,7 @@ def test_harmonizer_preserves_unmatched_categories_instead_of_coercing_them():
     frame = synthetic_example_rows().loc[:, list(PREDICTOR_FIELDS)].copy()
     frame.loc[0, "gender_bangladesh"] = "Another identity"
     output = uci_harmonized_frame(frame)
-    assert output.loc[0, "gender_bangladesh"] == "Another identity"
+    assert pd.isna(output.loc[0, "gender_bangladesh"])
     assert output.shape == (len(frame), 10)
 
 
@@ -83,6 +96,84 @@ def test_final_probability_depends_on_uci_signal_for_each_ensemble():
     finally:
         weighted.uci_pipeline = real_uci
     assert upper != lower
+
+
+def test_saved_calibrated_output_matches_training_time_logit_transform():
+    weighted = joblib.load(MODEL_DIR / "weighted_ensemble_dropout_status_18.joblib")["pipeline"]
+    frame = synthetic_example_rows().iloc[[0]].loc[:, list(PREDICTOR_FIELDS)]
+    local, uci = weighted.component_probabilities(frame)
+    assert local[0] != uci[0]
+    blended = .95 * local + .05 * uci
+    expected = calibrator_predict(weighted.calibrator, blended)[0]
+    assert weighted.predict_proba(frame)[0, 1] == pytest.approx(expected, abs=1e-12)
+    transformed = calibrator_logit_feature(blended)
+    direct = weighted.calibrator.predict_proba(transformed.reshape(-1, 1))[0, 1]
+    assert expected == pytest.approx(direct, abs=1e-12)
+    assert 0 <= expected <= 1
+
+
+def test_different_component_scores_are_blended_then_calibrated_not_forced_to_raw_blend():
+    weighted = joblib.load(MODEL_DIR / "weighted_ensemble_dropout_status_18.joblib")["pipeline"]
+    frame = synthetic_example_rows().iloc[[0]].loc[:, list(PREDICTOR_FIELDS)]
+    original_local, original_uci = weighted.bangladesh_pipeline, weighted.uci_pipeline
+    try:
+        weighted.bangladesh_pipeline = FixedProbabilityModel(.076)
+        weighted.uci_pipeline = FixedProbabilityModel(.179)
+        raw_blend = .95 * .076 + .05 * .179
+        expected = calibrator_predict(weighted.calibrator, np.asarray([raw_blend]))[0]
+        actual = weighted.predict_proba(frame)[0, 1]
+    finally:
+        weighted.bangladesh_pipeline, weighted.uci_pipeline = original_local, original_uci
+    assert raw_blend == pytest.approx(.08115)
+    assert actual == pytest.approx(expected, abs=1e-12)
+    assert 0 <= actual <= 1
+
+
+def test_source_qualified_occupation_options_have_explicit_component_handling():
+    bd_values = {"Not Alive", "Housewife", "Business owner", "Government employee", "Private-sector employee"}
+    assert bd_values.issubset(COMBINED_PARENT_OCCUPATION_CHOICES)
+    uci_student = "UCI source-only (not used by prediction) — Student"
+    assert uci_student in COMBINED_PARENT_OCCUPATION_CHOICES
+    assert UCI_OCCUPATION_BY_LABEL[uci_student] == 0
+    assert parent_occupation_to_uci(uci_student) == 0
+    assert parent_occupation_to_uci("UCI source-only (not used by prediction) — Intellectual and scientific specialists") == 2
+    assert uci_occupation_code_to_broad(121) == 2
+    assert uci_occupation_code_to_broad(102) == 10
+    assert uci_occupation_code_to_broad(99) is None
+    assert pd.isna(parent_occupation_to_bangladesh(uci_student))
+    assert parent_occupation_to_bangladesh("Not Alive") == "Not Alive"
+    assert pd.isna(parent_occupation_to_bangladesh("unrecognized occupation"))
+    assert UCI_MARITAL_TO_BANGLADESH == {
+        1: "Single / Never married", 2: "Married", 3: "Widowed",
+        4: "Divorced", 6: "Separated",
+    }
+    assert marital_status_to_bangladesh(3) == "Widowed"
+    assert marital_status_to_bangladesh(6) == "Separated"
+    assert pd.isna(marital_status_to_bangladesh(5))
+    frame = synthetic_example_rows().iloc[[0]].loc[:, list(PREDICTOR_FIELDS)].copy()
+    frame.loc[:, "mother_occupation_bangladesh"] = uci_student
+    masked = bangladesh_component_frame(frame)
+    assert pd.isna(masked.loc[masked.index[0], "mother_occupation_bangladesh"])
+    assert "mother_occupation_bangladesh" not in uci_harmonized_frame(frame).columns
+
+
+def test_source_qualified_occupation_runs_through_active_ensemble_without_coercion():
+    weighted = joblib.load(MODEL_DIR / "weighted_ensemble_dropout_status_18.joblib")["pipeline"]
+    frame = synthetic_example_rows().iloc[[0]].loc[:, list(PREDICTOR_FIELDS)].copy()
+    frame.loc[:, "mother_occupation_bangladesh"] = "UCI source-only (not used by prediction) — Student"
+    local, uci = weighted.component_probabilities(frame)
+    assert np.isfinite(local[0]) and np.isfinite(uci[0])
+    assert 0 <= weighted.predict_proba(frame)[0, 1] <= 1
+
+
+def test_housewife_is_preserved_but_only_mother_field_is_in_fitted_encoder():
+    from src.bangladesh_collection import CATEGORICAL_CHOICES
+    local = joblib.load(MODEL_DIR / "weighted_ensemble_dropout_status_18.joblib")["pipeline"].bangladesh_pipeline
+    encoder = local.named_steps["preprocess"].named_transformers_["categorical"].named_steps["onehot"]
+    categorical_fields = [field for field in PREDICTOR_FIELDS if field in CATEGORICAL_CHOICES]
+    encoded = dict(zip(categorical_fields, encoder.categories_))
+    assert "Housewife" in encoded["mother_occupation_bangladesh"]
+    assert "Housewife" not in encoded["father_occupation_bangladesh"]
 
 
 def test_metadata_documents_cohorts_oof_fusion_threshold_and_distinct_targets():

@@ -8,7 +8,7 @@ import joblib
 import pandas as pd
 import pytest
 from app import (
-    APP_PAGES, BATCH_COLUMNS, FORM_FIELDS, ID_COLUMN, METADATA_PATH, MODEL_PATH, RESULT_COLUMNS,
+    APP_PAGES, ASSESSMENT_CATEGORICAL_CHOICES, BATCH_COLUMNS, FORM_FIELDS, ID_COLUMN, METADATA_PATH, MODEL_PATH, RESULT_COLUMNS,
     SEMESTER_COLUMN, USER_FIELDS, analyze_batch, dropout_probability, export_results,
     export_results_excel, load_model_artifact, make_input_frame, predict_student,
     prepare_student, read_uploaded_table, render_result, risk_label, support_guidance, template_excel,
@@ -92,6 +92,22 @@ def test_input_validation_and_threshold_boundary():
     assert not validate_inputs(sample_values())
 
 
+def test_assessment_uses_exact_bangladesh_occupation_choices():
+    from src.bangladesh_collection import PARENT_OCCUPATIONS
+    choices = ASSESSMENT_CATEGORICAL_CHOICES["mother_occupation_bangladesh"]
+    assert choices == PARENT_OCCUPATIONS
+    assert "Not Alive" in choices and "Housewife" in choices
+    assert not any(value.startswith("UCI source-only") for value in choices)
+    assert validate_inputs(sample_values(**{"mother_occupation_bangladesh": "UCI source-only — Student"}))
+    assert validate_inputs(sample_values(**{"mother_occupation_bangladesh": "made-up category"}))
+
+
+def test_both_assessment_parent_occupation_dropdowns_use_original_local_schema():
+    from src.bangladesh_collection import PARENT_OCCUPATIONS
+    assert ASSESSMENT_CATEGORICAL_CHOICES["mother_occupation_bangladesh"] == PARENT_OCCUPATIONS
+    assert ASSESSMENT_CATEGORICAL_CHOICES["father_occupation_bangladesh"] == PARENT_OCCUPATIONS
+
+
 def test_metrics_and_schema_match_training_report():
     results = json.loads(RESULTS_PATH.read_text(encoding="utf-8"))
     assert results["training_counts"]["bangladesh_records"] == 251
@@ -154,12 +170,20 @@ def test_batch_schema_validation_prediction_and_exports():
     result = analyze_batch(artifact, one)
     assert len(result) == 1
     assert 0 <= result.loc[0, "Estimated Current Dropout-Status Probability"] <= 1
+    individual = predict_student(artifact, student())
+    assert result.loc[0, "Estimated Current Dropout-Status Probability"] == pytest.approx(individual["probability"])
     assert set(RESULT_COLUMNS).issubset(result.columns)
     csv = pd.read_csv(io.BytesIO(export_results(result)))
     excel = pd.read_excel(io.BytesIO(export_results_excel(result)), engine="openpyxl")
     assert set(RESULT_COLUMNS).issubset(csv.columns)
     assert set(RESULT_COLUMNS).issubset(excel.columns)
     assert csv.loc[0, "Mother's occupation"] == "Not Alive"
+    assert csv.loc[0, "Estimated Current Dropout-Status Probability"] == pytest.approx(individual["probability"])
+
+
+def test_batch_rejects_uci_occupation_values_not_in_bangladesh_schema():
+    one = pd.DataFrame([student(**{"Mother's occupation": "UCI source-only (not used by prediction) — Student"})])
+    assert "unsupported value" in " ".join(validate_batch_dataframe(one)["Issue"])
 
 
 def test_batch_validation_rejects_invalid_values_but_allows_missing_optional_features():
@@ -251,3 +275,37 @@ def test_status_result_panel_labels_current_status_not_future_dropout(monkeypatc
                    "indicators": ["Example indicator"], "supports": ["Example support"]})
     assert any("CURRENT DROPOUT-STATUS" in str(item) for item in rendered)
     assert any("not a prediction of future dropout" in str(item) for item in rendered)
+
+
+def test_result_panel_displays_threshold_to_one_decimal_percent(monkeypatch):
+    rendered = []
+
+    class Dummy:
+        def markdown(self, value, **kwargs): rendered.append(value)
+        def caption(self, value): rendered.append(value)
+        def download_button(self, *args, **kwargs): pass
+
+    import app as app_module
+    monkeypatch.setattr(app_module, "st", Dummy())
+    render_result({"probability": .5, "threshold": ACTIVE_THRESHOLD, "risk_level": "Elevated Estimated Risk",
+                   "indicators": [], "supports": []})
+    assert any("Threshold 30.4%" in str(item) for item in rendered)
+
+
+def test_individual_download_uses_final_calibrated_probability(monkeypatch):
+    downloaded = []
+
+    class Dummy:
+        def markdown(self, *args, **kwargs): pass
+        def caption(self, *args, **kwargs): pass
+        def download_button(self, label, data, **kwargs): downloaded.append(data)
+        def columns(self, *args, **kwargs): return [self, self]
+        def metric(self, *args, **kwargs): pass
+
+    import app as app_module
+    monkeypatch.setattr(app_module, "st", Dummy())
+    artifact = load_model_artifact()
+    result = predict_student(artifact, student())
+    render_result(result)
+    assert len(downloaded) == 1
+    assert f'{result["probability"]:.1%}' in downloaded[0]

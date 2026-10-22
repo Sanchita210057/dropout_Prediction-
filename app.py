@@ -14,13 +14,14 @@ from src.bangladesh_collection import (
     STATUS_FIELD as BD_STATUS_FIELD,
     STATUS_TITLE as BD_STATUS_TITLE,
     ACADEMIC_STATUS_OPTIONS as BD_ACADEMIC_STATUS_OPTIONS,
-    PARENT_OCCUPATIONS as BD_PARENT_OCCUPATIONS,
-    FINANCIAL_CONDITION_OPTIONS as BD_FINANCIAL_OPTIONS,
-    STUDENT_EMPLOYMENT_OPTIONS as BD_EMPLOYMENT_OPTIONS,
     academic_status_target,
     clean_google_forms_responses,
     questionnaire_template_frame,
     validate_bangladesh_responses,
+)
+from src.combined_ensemble_v2 import (
+    UCI_OCCUPATIONS,
+    parent_occupation_to_uci,
 )
 
 ROOT=Path(__file__).resolve().parent
@@ -30,12 +31,13 @@ THRESHOLD=None
 FORM_FIELDS=list(BD_PREDICTOR_FIELDS)
 USER_FIELDS=[BD_FIELD_TITLES[field] for field in FORM_FIELDS]
 USER_FIELD_TO_KEY=dict(zip(USER_FIELDS,FORM_FIELDS))
+ASSESSMENT_CATEGORICAL_CHOICES=dict(BD_CATEGORICAL_CHOICES)
 ID_COLUMN='Anonymous Follow-Up ID'
 SEMESTER_COLUMN='Current Semester / Academic Year'
 BATCH_COLUMNS=[ID_COLUMN,SEMESTER_COLUMN,*USER_FIELDS]
 RESULT_COLUMNS=[ID_COLUMN,SEMESTER_COLUMN,'Estimated Current Dropout-Status Probability','UCI Academic Foundation Signal (research estimate)','Bangladesh Local Model Signal (research estimate)','Risk Level','Main Indicator','Key Risk Indicators','Suggested Institute Support']
 APP_PAGES=['Dashboard','Individual Assessment','Batch Analysis','About Project','Bangladesh Data Collection']
-OCCUPATIONS={0:'Student',1:'Legislative/executive representatives, directors and managers',2:'Intellectual and scientific specialists',3:'Intermediate-level technicians and professions',4:'Administrative staff',5:'Personal services, security and sales workers',6:'Skilled agriculture, fisheries and forestry workers',7:'Skilled industry, construction and craft workers',8:'Machine operators and assembly workers',9:'Unskilled workers',10:'Armed Forces',90:'Other situation',99:'Unspecified',101:'Armed Forces officers',102:'Armed Forces sergeants',103:'Other Armed Forces personnel',112:'Administrative and commercial services directors',114:'Hotel, catering, trade and other service directors',121:'Physical sciences, mathematics and engineering specialists',122:'Health professionals',123:'Teachers',124:'Finance, administration and commercial specialists',125:'Information and communication technology specialists',131:'Intermediate science and engineering technicians',132:'Intermediate health technicians',134:'Intermediate legal, social, cultural and sports services',135:'Information and communication technology technicians',141:'Office, secretarial and data-processing workers',143:'Data, accounting, statistics and financial operators',144:'Other administrative support staff',151:'Personal service workers',152:'Sellers',153:'Personal care workers',154:'Protection and security personnel',161:'Market-oriented farmers and skilled agricultural workers',163:'Subsistence farmers, fishers, hunters and gatherers',171:'Skilled construction workers (except electricians)',172:'Skilled metallurgy and metalworking workers',173:'Printing, precision, jewellery and craft workers',174:'Skilled electrical and electronics workers',175:'Food, wood, clothing and other craft workers',181:'Fixed-plant and machine operators',182:'Assembly workers',183:'Vehicle drivers and mobile-equipment operators',191:'Cleaning workers',192:'Unskilled agriculture, fisheries and forestry workers',193:'Unskilled extractive, construction, manufacturing and transport workers',194:'Meal preparation assistants',195:'Street vendors and service providers'}
+OCCUPATIONS=UCI_OCCUPATIONS
 OCCUPATION_BY_LABEL={label:code for code,label in OCCUPATIONS.items()}
 EDUCATION_LEVELS={1:'Secondary education (12th year)',2:'Bachelor degree',3:'Higher education degree',4:'Master degree',5:'Doctorate',6:'Higher education (some)',9:'Incomplete secondary (12th year)',10:'Incomplete 11th year',11:'7th year (old)',12:'11th year (other)',14:'10th year',18:'General commerce course',19:'Basic education 3rd cycle',22:'Technical-professional course',26:'7th year',27:'2nd cycle general high school',29:'Incomplete 9th year',30:'8th year',34:'Unknown',35:'Cannot read or write',36:'Reads without 4th year',37:'Basic education 1st cycle',38:'Basic education 2nd cycle',39:'Technological specialization',40:'Higher degree (1st cycle)',41:'Specialized higher studies',42:'Professional higher technical',43:'Master (2nd cycle)',44:'Doctorate (3rd cycle)'}
 EDUCATION_BY_LABEL={label:code for code,label in EDUCATION_LEVELS.items()}
@@ -100,7 +102,7 @@ def validate_inputs(values:dict[str,Any])->list[str]:
         try:
             if int(values[field])!=float(values[field]) or float(values[field])<0: issues.append(f'{BD_FIELD_TITLES[field]} must be a non-negative whole number.')
         except (TypeError,ValueError): issues.append(f'{BD_FIELD_TITLES[field]} must be numeric.')
-    for field,choices in BD_CATEGORICAL_CHOICES.items():
+    for field,choices in ASSESSMENT_CATEGORICAL_CHOICES.items():
         if field in values and str(values[field]) not in choices: issues.append(f'{BD_FIELD_TITLES[field]} has an unsupported value.')
     return issues
 
@@ -142,6 +144,8 @@ def parse_boolean(value:Any)->bool:
     raise ValueError('must be Yes/No, TRUE/FALSE, or 1/0')
 
 def occupation_code(value:Any)->int:
+    mapped=parent_occupation_to_uci(value)
+    if mapped is not None: return mapped
     if value in OCCUPATION_BY_LABEL: return OCCUPATION_BY_LABEL[value]
     try: code=int(float(value))
     except (TypeError,ValueError): raise ValueError('is not a supported occupation label')
@@ -189,7 +193,7 @@ def validate_batch_dataframe(frame:pd.DataFrame)->pd.DataFrame:
             if number<minimum or number>maximum or (integer and not number.is_integer()):
                 kind='whole number' if integer else 'number'
                 issue(f'{title} must be a {kind} in range {minimum:g}–{maximum:g}.')
-        for field,choices in BD_CATEGORICAL_CHOICES.items():
+        for field,choices in ASSESSMENT_CATEGORICAL_CHOICES.items():
             if field not in FORM_FIELDS: continue
             title=BD_FIELD_TITLES[field]; value=row[title]
             if pd.isna(value) or str(value).strip()=='': continue
@@ -225,7 +229,7 @@ def template_frame()->pd.DataFrame:
     example={ID_COLUMN:'EXAMPLE-001',SEMESTER_COLUMN:'Relevant semester'}
     for field in FORM_FIELDS:
         title=BD_FIELD_TITLES[field]
-        choices=BD_CATEGORICAL_CHOICES.get(field)
+        choices=ASSESSMENT_CATEGORICAL_CHOICES.get(field)
         if choices: example[title]=choices[0]
         elif field=='hsc_equivalent_gpa': example[title]=4.20
         elif field=='age_at_enrollment': example[title]=19
@@ -290,7 +294,7 @@ def dashboard(artifact:dict[str,Any])->None:
 
 def render_result(result:dict[str,Any],student_id:str='Individual Assessment')->None:
     elevated=result['risk_level'].startswith('Elevated'); status='elevated' if elevated else 'lower'; width=max(2,min(100,result['probability']*100))
-    st.markdown(f'''<div class="result-panel {status}"><div class="result-top"><div><span class="result-label">ESTIMATED REPORTED CURRENT DROPOUT-STATUS PROBABILITY</span><strong>{result["probability"]:.1%}</strong></div><div class="status-badge">{result["risk_level"]}</div></div><div class="risk-track"><div style="width:{width:.1f}%"></div></div><div class="scale"><span>Lower estimate</span><span>Threshold {result["threshold"]:.0%}</span><span>Higher estimate</span></div></div>''',unsafe_allow_html=True)
+    st.markdown(f'''<div class="result-panel {status}"><div class="result-top"><div><span class="result-label">ESTIMATED REPORTED CURRENT DROPOUT-STATUS PROBABILITY</span><strong>{result["probability"]:.1%}</strong></div><div class="status-badge">{result["risk_level"]}</div></div><div class="risk-track"><div style="width:{width:.1f}%"></div></div><div class="scale"><span>Lower estimate</span><span>Threshold {result["threshold"]:.1%}</span><span>Higher estimate</span></div></div>''',unsafe_allow_html=True)
     components=result.get('component_scores')
     if components:
         st.caption('Component research signals (not independently validated future-dropout probabilities). The ensemble result above is the single assessment output.')
@@ -325,8 +329,9 @@ def individual_assessment(artifact:dict[str,Any])->None:
             else: answers[field]=st.number_input(BD_FIELD_TITLES[field],15,100,19)
         section_heading('Family Background','02')
         for field in ('mother_occupation_bangladesh','father_occupation_bangladesh','mother_education_bangladesh','father_education_bangladesh'):
-            choices=BD_CATEGORICAL_CHOICES[field]; default='Unknown / Prefer not to say'
-            answers[field]=st.selectbox(BD_FIELD_TITLES[field],choices,index=choices.index(default),key='individual_'+field)
+            choices=ASSESSMENT_CATEGORICAL_CHOICES[field]; default='Unknown / Prefer not to say'
+            help_text=('Choose a Bangladesh questionnaire category. The UCI component uses ten harmonized academic/demographic features and does not learn parental occupation categories. The local component preserves Bangladesh categories; father Housewife was absent from its training vocabulary.' if 'occupation' in field else None)
+            answers[field]=st.selectbox(BD_FIELD_TITLES[field],choices,index=choices.index(default),key='individual_'+field,help=help_text)
         section_heading('Financial Status','03')
         for field in ('scholarship_holder','debtor','tuition_fees_up_to_date','family_financial_condition','student_employment'):
             choices=BD_CATEGORICAL_CHOICES[field]
@@ -398,7 +403,7 @@ def about(artifact:dict[str,Any])->None:
     with c1:
         info_card('Purpose','Demonstrate classification of reported current dropout status and connect it with human-reviewed support guidance.')
         info_card('Dataset','Bangladesh University Research Responses.xlsx · 251 local questionnaire responses. Current status is reported at survey time.')
-        info_card('Model',f"Expanded UCI academic foundation + Bangladesh 18-input model · calibrated {artifact.get('blend_weight_uci',0):.0%}/{artifact.get('blend_weight_bangladesh',0):.0%} probability blend · threshold {artifact.get('threshold',0.5):.3f} selected from training-only OOF predictions.")
+        info_card('Model',f"Expanded UCI academic foundation + Bangladesh 18-input model · calibrated {artifact.get('blend_weight_uci',0):.0%}/{artifact.get('blend_weight_bangladesh',0):.0%} probability blend · threshold {artifact.get('threshold',0.5):.1%} selected from training-only OOF predictions.")
     with c2:
         info_card('Performance',performance)
         info_card('How Risk Indicators Work','A separate deterministic layer summarizes relevant academic and financial warnings. They are not causal explanations.')
@@ -411,7 +416,7 @@ def bangladesh_data_collection()->None:
     c1,c2=st.columns(2,gap='large')
     with c1:
         info_card('Questionnaire schema','Version 3 contains exactly 18 predictor questions followed by one required Current Academic Status dropdown. It collects no consent, student ID, university name, dates, or other research metadata. The status field is excluded from every input feature set.')
-        info_card('Parent occupations','Both parent questions use Bangladesh survey categories: '+', '.join(BD_PARENT_OCCUPATIONS)+'. These local categories remain text values and are not mapped to Portuguese UCI occupation codes.')
+        info_card('Parent occupations','The assessment form uses the original Bangladesh questionnaire categories, including Not Alive and Housewife. The UCI component uses ten harmonized features and does not learn parental occupation categories; no Portuguese-to-Bangladesh occupation crosswalk is applied. Housewife is represented in the mother encoder but not the father encoder, where it is handled as an unseen category. The separate Bangladesh research questionnaire retains its original categories unchanged.')
     with c2:
         info_card('Local fields','Attendance is 0–100% or blank. Household-income brackets are provisional survey categories, not official poverty definitions. Employment options describe student work. GPA fields are recorded without cross-country conversion.')
         info_card('Status label','Dropout (Discontinued Studies) maps to 1. Passed (Graduated) and Running (Currently Studying) map to 0, as specified. Running is only the status reported at submission and is not evidence of future completion or non-dropout.')
