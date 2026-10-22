@@ -12,6 +12,7 @@ from app import (
     SEMESTER_COLUMN, USER_FIELDS, analyze_batch, dropout_probability, export_results,
     export_results_excel, load_model_artifact, make_input_frame, predict_student,
     prepare_student, read_uploaded_table, render_result, risk_label, support_guidance, template_excel,
+    assessment_pdf,
     template_frame, validate_batch_dataframe, validate_inputs,
 )
 from src.bangladesh_collection import PREDICTOR_FIELDS, synthetic_example_rows
@@ -260,14 +261,15 @@ def test_public_pages_render_and_individual_assessment_uses_18_inputs(monkeypatc
     assert len(stub.inputs)==18
     assert 'Current Academic Status' not in stub.inputs
     assert any('CURRENT DROPOUT-STATUS' in value for value in stub.markdown_text)
-    assert any('Hybrid' in value and 'UCI + Bangladesh Model' in value for value in stub.markdown_text)
+    assert any('Logistic Regression' in value and 'Ensemble' in value for value in stub.markdown_text)
     assert not any('Component research signals' in value or 'These indicators are based' in value for value in stub.markdown_text)
     assert stub.downloads and stub.uploads
     assert any(args and args[0]=='Assess One Student' for args in stub.buttons)
     assert any(args and args[0]=='Analyze Student Batch' for args in stub.buttons)
     for expected in ('96.4%','89.1%','94.2%','91.6%','98.6%','93.5%','193','6','3','49',
                      'This system helps identify students at higher dropout risk',
-                     '18 student input factors','Support recommendations'):
+                     '18 student input factors','Support recommendations','Calibrated Logistic Regression Ensemble',
+                     'Five-fold cross-validation','242','52','Logistic Regression calibration'):
         assert expected in rendered
     assert any(args and args[0]=='Download CSV Template' for args in stub.downloads)
     assert any(args and args[0]=='Download Excel Template' for args in stub.downloads)
@@ -280,13 +282,17 @@ def test_status_result_panel_labels_current_status_not_future_dropout(monkeypatc
         def markdown(self, value, **kwargs): rendered.append(value)
         def caption(self, value): rendered.append(value)
         def download_button(self, *args, **kwargs): rendered.append(args)
+        def expander(self, *args, **kwargs): return RenderContext(self)
 
     import app as app_module
     monkeypatch.setattr(app_module, "st", Dummy())
     render_result({"probability": .65, "threshold": .5, "risk_level": "Elevated Estimated Risk",
                    "indicators": ["Example indicator"], "supports": ["Example support"]})
     assert any("CURRENT DROPOUT-STATUS" in str(item) for item in rendered)
-    assert any("not a prediction of future dropout" in str(item) for item in rendered)
+    assert any("Key Risk Indicators" in str(item) for item in rendered)
+    assert any("Example indicator" in str(item) for item in rendered)
+    assert any("Possible Institute Support" in str(item) for item in rendered)
+    assert any("Example support" in str(item) for item in rendered)
 
 
 def test_result_panel_displays_threshold_to_one_decimal_percent(monkeypatch):
@@ -311,6 +317,7 @@ def test_individual_download_uses_final_calibrated_probability(monkeypatch):
         def markdown(self, *args, **kwargs): pass
         def caption(self, *args, **kwargs): pass
         def download_button(self, label, data, **kwargs): downloaded.append(data)
+        def expander(self, *args, **kwargs): return RenderContext(self)
         def columns(self, *args, **kwargs): return [self, self]
         def metric(self, *args, **kwargs): pass
 
@@ -320,4 +327,15 @@ def test_individual_download_uses_final_calibrated_probability(monkeypatch):
     result = predict_student(artifact, student())
     render_result(result)
     assert len(downloaded) == 1
-    assert f'{result["probability"]:.1%}' in downloaded[0]
+    assert downloaded[0].startswith(b'%PDF-')
+    assert len(downloaded[0]) > 1000
+
+
+def test_pdf_download_contains_assessment_and_uses_supplied_result_without_predicting():
+    result={"probability":.417,"threshold":ACTIVE_THRESHOLD,"risk_level":"Elevated Estimated Risk",
+            "indicators":["Attendance follow-up flagged"],"supports":["Academic advising"]}
+    pdf=assessment_pdf(result,"REFERENCE-42")
+    assert pdf.startswith(b"%PDF-")
+    assert len(pdf)>1000
+    for expected in (b'REFERENCE-42',b'41.7%',b'Elevated Estimated Risk',b'Attendance follow-up flagged',b'Academic advising'):
+        assert expected in pdf

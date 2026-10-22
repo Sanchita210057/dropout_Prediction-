@@ -1,6 +1,6 @@
 # Student Dropout Early Warning System
 
-Project A's active model is a two-component **UCI + Bangladesh 18-input ensemble**. Model A supplies an academic signal learned from resolved Portuguese UCI outcomes; Model B uses all 18 Bangladesh questionnaire predictors; Model C combines them. The target the app estimates is **reported current Bangladesh dropout status**, not a validated future-dropout outcome.
+Project A's active model is a **calibrated Logistic Regression ensemble** with two Logistic Regression classifiers: a UCI academic component and a Bangladesh-local component. The weighted component scores are combined and passed through logistic calibration. The target the app estimates is **reported current Bangladesh dropout status**, not a validated future-dropout outcome.
 
 ## Active model contract
 
@@ -99,4 +99,4 @@ The application resolves its model and default data paths relative to `app.py` w
 
 To reproduce the final-model evaluation, deliberately run `python -m src.train_combined_ensemble_18` after confirming both sources; it writes artifacts and reports under the active model paths, so it is not part of normal use. The active artifact contains both fitted components; no separate component model file is needed at inference.
 
-The four public app pages are Dashboard, Individual Assessment, Batch Analysis, and About Project. A separate Bangladesh response-collection workflow remains in the codebase but is not exposed in the supervisor-facing navigation. Individual and batch assessment use the same 18 inputs, selected ensemble, threshold, and support guidance. CSV/Excel batch processing remains in memory. Project B is a separate local archive and is not part of this application.
+The four public app pages are Dashboard, Individual Assessment, Batch Analysis, and About Project. A separate Bangladesh response-collection workflow remains in the codebase but is not exposed in the supervisor-facing navigation. Individual and batch assessment use the same 18 inputs, selected ensemble, threshold, and support guidance. Individual assessment reports are downloadable as a formatted PDF; batch processing supports CSV/Excel templates and exports in memory. Project B is a separate local archive and is not part of this application.
